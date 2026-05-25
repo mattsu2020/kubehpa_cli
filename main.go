@@ -241,7 +241,7 @@ func interpret(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas int32) []
 
 	if len(hpa.Status.CurrentMetrics) > 1 {
 		lines = append(lines, "Multiple current metrics are reported, but the API does not expose per-metric replica recommendations as structured status.")
-		lines = append(lines, "Events and condition messages can hint at the contributing metric, but they are not a stable decision record.")
+		lines = append(lines, "Events and human-readable messages can hint at the contributing metric, but they are not a stable decision record.")
 	}
 
 	lines = append(lines, "This plugin uses existing HPA status, conditions, metrics, and events. It does not expose internal controller calculations.")
