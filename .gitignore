@@ -1,0 +1,3 @@
+kubectl-hpa-status
+*.test
+coverage.out
