@@ -135,7 +135,7 @@ func TestWriteListTextVisuallyHighlightsProblems(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := WriteListText(&out, report, false); err != nil {
+	if err := WriteListText(&out, report, ListTextOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	text := out.String()
@@ -144,6 +144,20 @@ func TestWriteListTextVisuallyHighlightsProblems(t *testing.T) {
 	}
 	if !strings.Contains(text, "! LIMITED") {
 		t.Fatalf("expected LIMITED marker in %q", text)
+	}
+}
+
+func TestWriteListTextColorizesHealthWhenEnabled(t *testing.T) {
+	report := ListReport{Items: []ListItem{
+		{Namespace: "default", Name: "api", Current: 2, Desired: 2, Health: "ERROR", Issue: "ERROR: FailedGetResourceMetric", Summary: "broken"},
+	}}
+
+	var out bytes.Buffer
+	if err := WriteListText(&out, report, ListTextOptions{Color: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "\x1b[31m! ERROR\x1b[0m") {
+		t.Fatalf("expected red ERROR marker, got %q", out.String())
 	}
 }
 

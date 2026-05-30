@@ -8,8 +8,9 @@ scaling analysis using existing Kubernetes API signals.
 ```sh
 kubectl hpa status <hpa-name> -n <namespace>
 kubectl hpa status <hpa-name> --explain
-kubectl hpa status list -A --wide
+kubectl hpa status list -A --wide --sort-by=desired --filter=scaling-limited
 kubectl hpa status ls -A -o json
+kubectl hpa status <hpa-name> --watch --timeout=2m --until-condition=scaling-limited
 kubectl hpa status <hpa-name> -o 'jsonpath={.analysis.summary}'
 ```
 
@@ -26,6 +27,26 @@ Common troubleshooting checks:
 - `ScalingLimited=True`: check `minReplicas`, `maxReplicas`, and target utilization.
 - `ScaleDownStabilized`: check `spec.behavior.scaleDown.stabilizationWindowSeconds` and wait for the stabilization window.
 - missing or stale output: compare `status.observedGeneration` with `metadata.generation`.
+
+First help output after installation:
+
+```text
+Inspect HorizontalPodAutoscaler status
+
+Usage:
+  kubectl-hpa-status [flags]
+  kubectl-hpa-status [command]
+
+Available Commands:
+  analyze     Analyze one HPA using visible Kubernetes API signals
+  completion  Generate shell completion
+  list        List HPAs and highlight visible issues
+  status      Show concise status for one HPA
+  watch       Watch one HPA status
+
+Common flags include -n/--namespace, -A/--all-namespaces, -o/--output,
+--events, --explain, --watch, --interval, --timeout, and --until-condition.
+```
 
 ## Install
 
@@ -58,19 +79,18 @@ To verify the plugin is visible:
 kubectl plugin list
 ```
 
-The Go module path currently follows the repository import path
-`github.com/mattsu2020/kubehpa_cli`. The released plugin and binary keep the
-user-facing name `kubectl-hpa-status`. Keep `go.mod`, import paths, the GitHub
-repository owner/name, and `.goreleaser.yml` ldflags in one rename change if the
-repository moves to `kubectl-hpa-status` or an organization account.
+The Go module path, GitHub repository, release metadata, and user-facing binary
+name now all use `github.com/mattsu2020/kubectl-hpa-status` /
+`kubectl-hpa-status`.
 
 ## Usage
 
 ```sh
 kubectl hpa status <hpa-name> [-n namespace] [--context context] [--events=false]
 kubectl hpa status <hpa-name> --watch --interval 5s
+kubectl hpa status <hpa-name> --watch --timeout 2m --until-condition scaling-limited
 kubectl hpa status analyze <hpa-name>
-kubectl hpa status list [-A] [-o table|wide|json|yaml]
+kubectl hpa status list [-A] [--sort-by desired] [--filter scaling-limited]
 kubectl hpa status ls [-A] --wide
 kubectl hpa status watch <hpa-name> --interval 5s
 ```
@@ -103,13 +123,24 @@ Common flags:
 - `--context`, `--kubeconfig`, `--cluster`: explicit kubeconfig selection
 - `-o table|wide|json|yaml|jsonpath=...|template=...`: output format
 - `--wide`: show target, min, and max columns in table output
+- `--sort-by namespace|name|current|desired|health|issue`: sort `list` output
+- `--filter all|ok|error|limited|scaling-limited|issue`: filter `list` output
+- `--color auto|always|never`: colorize table output
 - `--interpret`: include diagnostic interpretation in compact status output
 - `--explain`: include detailed interpretation and recommended actions
 - `--no-interpret`: omit interpretation and show status-derived data only
 - `--events=false`: omit recent Events
 - `--events=3`: show the latest 3 HPA Events
 - `--watch --interval 5s`: refresh one HPA from the main command
+- `--timeout 2m`: stop watch after a duration
+- `--until-condition scaling-limited`: stop watch once the condition type is present
 - `--version`: print the plugin version
+
+Supported Kubernetes versions:
+
+- Runtime target: clusters serving `autoscaling/v2` `HorizontalPodAutoscaler`
+- Validated cluster: Kubernetes v1.35.0 with metrics-server v0.8.1
+- Client libraries: `k8s.io/client-go` / `k8s.io/api` v0.34.2
 
 The plugin reads:
 
@@ -260,9 +291,9 @@ The repository is now structured for incremental feature work:
 Near-term work:
 
 - add integration tests with kind/testenv for real HPA behavior
-- expand `list` issue detection beyond conditions and replica limits
+- add terminal screenshots or asciinema recordings for the README
+- add release automation for Homebrew formulae and SBOMs
 - add richer structured output contracts as the CLI stabilizes
-- add screenshots or terminal recordings once the output format is settled
 
 ## License
 

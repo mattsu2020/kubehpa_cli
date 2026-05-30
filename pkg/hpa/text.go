@@ -95,6 +95,11 @@ type ListReport struct {
 	Items []ListItem `json:"items" yaml:"items"`
 }
 
+type ListTextOptions struct {
+	Wide  bool
+	Color bool
+}
+
 func NewListItem(src Analysis) ListItem {
 	issue := ""
 	health := "OK"
@@ -127,12 +132,12 @@ func NewListItem(src Analysis) ListItem {
 	}
 }
 
-func WriteListText(w io.Writer, report ListReport, wide bool) error {
+func WriteListText(w io.Writer, report ListReport, opts ListTextOptions) error {
 	var out []byte
-	if wide {
+	if opts.Wide {
 		out = fmt.Appendf(out, "%-20s %-32s %-28s %-8s %-8s %-8s %-8s %-12s %-32s %s\n", "NAMESPACE", "NAME", "TARGET", "CURRENT", "DESIRED", "MIN", "MAX", "HEALTH", "ISSUE", "SUMMARY")
 		for _, item := range report.Items {
-			out = fmt.Appendf(out, "%-20s %-32s %-28s %-8d %-8d %-8d %-8d %-12s %-32s %s\n", item.Namespace, item.Name, item.Target, item.Current, item.Desired, item.Min, item.Max, visualHealth(item.Health), item.Issue, item.Summary)
+			out = fmt.Appendf(out, "%-20s %-32s %-28s %-8d %-8d %-8d %-8d %-12s %-32s %s\n", item.Namespace, item.Name, item.Target, item.Current, item.Desired, item.Min, item.Max, visualHealth(item.Health, opts.Color), colorIssue(item.Issue, item.Health, opts.Color), item.Summary)
 		}
 		_, err := w.Write(out)
 		return err
@@ -140,19 +145,45 @@ func WriteListText(w io.Writer, report ListReport, wide bool) error {
 
 	out = fmt.Appendf(out, "%-20s %-32s %-8s %-8s %-12s %-32s %s\n", "NAMESPACE", "NAME", "CURRENT", "DESIRED", "HEALTH", "ISSUE", "SUMMARY")
 	for _, item := range report.Items {
-		out = fmt.Appendf(out, "%-20s %-32s %-8d %-8d %-12s %-32s %s\n", item.Namespace, item.Name, item.Current, item.Desired, visualHealth(item.Health), item.Issue, item.Summary)
+		out = fmt.Appendf(out, "%-20s %-32s %-8d %-8d %-12s %-32s %s\n", item.Namespace, item.Name, item.Current, item.Desired, visualHealth(item.Health, opts.Color), colorIssue(item.Issue, item.Health, opts.Color), item.Summary)
 	}
 	_, err := w.Write(out)
 	return err
 }
 
-func visualHealth(health string) string {
+func visualHealth(health string, color bool) string {
+	label := health
 	switch health {
 	case "ERROR":
-		return "! ERROR"
+		label = "! ERROR"
 	case "LIMITED":
-		return "! LIMITED"
+		label = "! LIMITED"
+	}
+	if !color {
+		return label
+	}
+	switch health {
+	case "ERROR":
+		return "\x1b[31m" + label + "\x1b[0m"
+	case "LIMITED":
+		return "\x1b[33m" + label + "\x1b[0m"
+	case "OK":
+		return "\x1b[32m" + label + "\x1b[0m"
 	default:
-		return health
+		return label
+	}
+}
+
+func colorIssue(issue, health string, color bool) string {
+	if !color || issue == "" {
+		return issue
+	}
+	switch health {
+	case "ERROR":
+		return "\x1b[31m" + issue + "\x1b[0m"
+	case "LIMITED":
+		return "\x1b[33m" + issue + "\x1b[0m"
+	default:
+		return issue
 	}
 }

@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/mattsu2020/kubehpa_cli/cmd"
+	"github.com/mattsu2020/kubectl-hpa-status/cmd"
 )
 
 func main() {

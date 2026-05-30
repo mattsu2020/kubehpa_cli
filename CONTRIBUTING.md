@@ -15,7 +15,31 @@ Run the plugin locally:
 ```sh
 ./kubectl-hpa-status status <hpa-name> -n <namespace>
 ./kubectl-hpa-status list -A
+./kubectl-hpa-status list -A --sort-by desired --filter scaling-limited
+./kubectl-hpa-status status <hpa-name> --watch --timeout 2m
 ```
+
+## Adding interpretation rules
+
+Interpretation rules live in `pkg/hpa/analysis.go`.
+
+When adding a rule:
+
+- prefer explicit HPA status fields over Event message parsing
+- add a confidence label when the output is inferential
+- avoid claiming the HPA controller's private intermediate recommendation
+- add or update a focused unit test in `pkg/hpa/analysis_test.go`
+- document any new user-facing output in `README.md`
+
+For list output changes, update `pkg/hpa/text.go` and cover the table behavior
+with tests. For command flags, add tests in `cmd/root_test.go` when the behavior
+can be checked without a live cluster.
+
+## Krew manifest
+
+The Krew plugin name is intentionally `hpa-status`. Keep `.krew.yaml`,
+GoReleaser archive names, and README install commands aligned when release
+metadata changes.
 
 ## Commit style
 

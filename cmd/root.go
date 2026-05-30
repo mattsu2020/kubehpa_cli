@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
 	"time"
 
-	"github.com/mattsu2020/kubehpa_cli/internal/kube"
-	hpaanalysis "github.com/mattsu2020/kubehpa_cli/pkg/hpa"
+	"github.com/mattsu2020/kubectl-hpa-status/internal/kube"
+	hpaanalysis "github.com/mattsu2020/kubectl-hpa-status/pkg/hpa"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/jsonpath"
@@ -22,24 +25,30 @@ import (
 var version = "dev"
 
 type options struct {
-	namespace     string
-	allNamespaces bool
-	contextName   string
-	kubeconfig    string
-	cluster       string
-	output        string
-	wide          bool
-	events        eventOption
-	interpret     bool
-	noInterpret   bool
-	explain       bool
-	watch         bool
-	watchInterval time.Duration
+	namespace      string
+	allNamespaces  bool
+	contextName    string
+	kubeconfig     string
+	cluster        string
+	output         string
+	wide           bool
+	sortBy         string
+	filter         string
+	color          string
+	events         eventOption
+	interpret      bool
+	noInterpret    bool
+	explain        bool
+	watch          bool
+	watchInterval  time.Duration
+	watchTimeout   time.Duration
+	untilCondition string
 }
 
 func NewRootCommand() *cobra.Command {
 	opts := &options{
 		events:        eventOption{enabled: true, limit: 5},
+		color:         "auto",
 		watchInterval: 5 * time.Second,
 	}
 
@@ -74,12 +83,15 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().StringVar(&opts.cluster, "cluster", "", "kubeconfig cluster")
 	root.PersistentFlags().StringVarP(&opts.output, "output", "o", "", "output format: table, wide, json, yaml, jsonpath=..., template=...")
 	root.PersistentFlags().BoolVar(&opts.wide, "wide", false, "show additional columns in table output")
+	root.PersistentFlags().StringVar(&opts.color, "color", opts.color, "colorize table output: auto, always, never")
 	root.PersistentFlags().BoolVar(&opts.interpret, "interpret", false, "include interpretation in status output")
 	root.PersistentFlags().BoolVar(&opts.explain, "explain", false, "include detailed interpretation and recommended actions")
 	root.PersistentFlags().BoolVar(&opts.noInterpret, "no-interpret", false, "omit interpretation and show raw status-derived data")
 	root.PersistentFlags().Var(&opts.events, "events", "show recent HPA events: true, false, or a number")
 	root.PersistentFlags().BoolVar(&opts.watch, "watch", false, "watch one HPA from the main status command")
 	root.PersistentFlags().DurationVar(&opts.watchInterval, "interval", opts.watchInterval, "watch refresh interval")
+	root.PersistentFlags().DurationVar(&opts.watchTimeout, "timeout", 0, "stop watching after this duration")
+	root.PersistentFlags().StringVar(&opts.untilCondition, "until-condition", "", "stop watching once an HPA condition type is present, for example scaling-limited")
 	root.PersistentFlags().Lookup("events").NoOptDefVal = "true"
 
 	root.AddCommand(newStatusCommand(opts))
@@ -122,7 +134,7 @@ func newAnalyzeCommand(opts *options) *cobra.Command {
 }
 
 func newListCommand(opts *options) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List HPAs and highlight visible issues",
@@ -131,6 +143,9 @@ func newListCommand(opts *options) *cobra.Command {
 			return runList(cmd.Context(), cmd.OutOrStdout(), opts)
 		},
 	}
+	cmd.Flags().StringVar(&opts.sortBy, "sort-by", "", "sort list by namespace, name, current, desired, health, or issue")
+	cmd.Flags().StringVar(&opts.filter, "filter", "", "filter list by all, ok, error, limited, scaling-limited, or issue")
+	return cmd
 }
 
 func newWatchCommand(opts *options) *cobra.Command {
@@ -167,6 +182,17 @@ func newCompletionCommand(root *cobra.Command) *cobra.Command {
 }
 
 func runStatus(ctx context.Context, out io.Writer, opts *options, name string, includeInterpretation bool) error {
+	report, err := buildStatusReport(ctx, opts, name, includeInterpretation)
+	if err != nil {
+		return err
+	}
+
+	return writeOutput(out, opts.output, report, func() error {
+		return hpaanalysis.WriteStatusText(out, report)
+	})
+}
+
+func buildStatusReport(ctx context.Context, opts *options, name string, includeInterpretation bool) (hpaanalysis.StatusReport, error) {
 	client, err := kube.NewClient(kube.Options{
 		Namespace:  opts.namespace,
 		Context:    opts.contextName,
@@ -174,7 +200,7 @@ func runStatus(ctx context.Context, out io.Writer, opts *options, name string, i
 		Cluster:    opts.cluster,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+		return hpaanalysis.StatusReport{}, fmt.Errorf("failed to create Kubernetes client from kubeconfig/context flags: %w", err)
 	}
 
 	hpa, err := client.Interface.AutoscalingV2().
@@ -182,9 +208,9 @@ func runStatus(ctx context.Context, out io.Writer, opts *options, name string, i
 		Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return fmt.Errorf("HPA %q was not found in namespace %q; check the name, namespace, or use list -A to find it: %w", name, client.Namespace, err)
+			return hpaanalysis.StatusReport{}, fmt.Errorf("HPA %q was not found in namespace %q; check the name, namespace, or use list -A to find it: %w", name, client.Namespace, err)
 		}
-		return fmt.Errorf("failed to get HPA %s/%s: %w", client.Namespace, name, err)
+		return hpaanalysis.StatusReport{}, fmt.Errorf("failed to get HPA %s/%s from the Kubernetes API server: %w", client.Namespace, name, err)
 	}
 
 	report := hpaanalysis.StatusReport{
@@ -200,9 +226,7 @@ func runStatus(ctx context.Context, out io.Writer, opts *options, name string, i
 		}
 	}
 
-	return writeOutput(out, opts.output, report, func() error {
-		return hpaanalysis.WriteStatusText(out, report)
-	})
+	return report, nil
 }
 
 func runList(ctx context.Context, out io.Writer, opts *options) error {
@@ -213,7 +237,7 @@ func runList(ctx context.Context, out io.Writer, opts *options) error {
 		Cluster:    opts.cluster,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+		return fmt.Errorf("failed to create Kubernetes client from kubeconfig/context flags: %w", err)
 	}
 
 	namespace := client.Namespace
@@ -230,16 +254,29 @@ func runList(ctx context.Context, out io.Writer, opts *options) error {
 
 	report := hpaanalysis.ListReport{}
 	for i := range hpas.Items {
-		report.Items = append(report.Items, hpaanalysis.NewListItem(hpaanalysis.Analyze(&hpas.Items[i], false)))
+		item := hpaanalysis.NewListItem(hpaanalysis.Analyze(&hpas.Items[i], false))
+		if matchesListFilter(item, opts.filter) {
+			report.Items = append(report.Items, item)
+		}
 	}
+	sortListItems(report.Items, opts.sortBy)
 
 	wide := opts.wide || opts.output == "wide"
 	return writeOutput(out, opts.output, report, func() error {
-		return hpaanalysis.WriteListText(out, report, wide)
+		return hpaanalysis.WriteListText(out, report, hpaanalysis.ListTextOptions{
+			Wide:  wide,
+			Color: shouldColorize(opts.color, out),
+		})
 	})
 }
 
 func runWatch(ctx context.Context, out io.Writer, opts *options, name string, includeInterpretation bool) error {
+	if opts.watchTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, opts.watchTimeout)
+		defer cancel()
+	}
+
 	ticker := time.NewTicker(opts.watchInterval)
 	defer ticker.Stop()
 
@@ -247,7 +284,17 @@ func runWatch(ctx context.Context, out io.Writer, opts *options, name string, in
 		if _, err := fmt.Fprintf(out, "Updated: %s\n\n", time.Now().Format(time.RFC3339)); err != nil {
 			return err
 		}
-		if err := runStatus(ctx, out, opts, name, includeInterpretation); err != nil {
+		report, err := buildStatusReport(ctx, opts, name, includeInterpretation)
+		if err != nil {
+			return err
+		}
+		if err := writeOutput(out, opts.output, report, func() error {
+			return hpaanalysis.WriteStatusText(out, report)
+		}); err != nil {
+			return err
+		}
+		if opts.untilCondition != "" && reportHasCondition(report, opts.untilCondition) {
+			_, err := fmt.Fprintf(out, "\nStopped: condition %q is present.\n", opts.untilCondition)
 			return err
 		}
 		select {
@@ -258,6 +305,78 @@ func runWatch(ctx context.Context, out io.Writer, opts *options, name string, in
 				return err
 			}
 		}
+	}
+}
+
+func matchesListFilter(item hpaanalysis.ListItem, filter string) bool {
+	switch normalizeSelector(filter) {
+	case "", "all":
+		return true
+	case "ok":
+		return item.Health == "OK"
+	case "error":
+		return item.Health == "ERROR"
+	case "limited", "scalinglimited":
+		return item.Health == "LIMITED"
+	case "issue":
+		return item.Issue != ""
+	default:
+		return strings.EqualFold(item.Health, filter) || strings.Contains(normalizeSelector(item.Issue), normalizeSelector(filter))
+	}
+}
+
+func sortListItems(items []hpaanalysis.ListItem, sortBy string) {
+	sort.SliceStable(items, func(i, j int) bool {
+		left := items[i]
+		right := items[j]
+		switch normalizeSelector(sortBy) {
+		case "namespace":
+			return left.Namespace < right.Namespace
+		case "name", "":
+			return left.Name < right.Name
+		case "current", "currentreplicas":
+			return left.Current < right.Current
+		case "desired", "desiredreplicas":
+			return left.Desired < right.Desired
+		case "health":
+			return left.Health < right.Health
+		case "issue":
+			return left.Issue < right.Issue
+		default:
+			return left.Namespace+"/"+left.Name < right.Namespace+"/"+right.Name
+		}
+	})
+}
+
+func reportHasCondition(report hpaanalysis.StatusReport, condition string) bool {
+	want := normalizeSelector(condition)
+	for _, current := range report.Analysis.Conditions {
+		if normalizeSelector(current.Type) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeSelector(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "-", "")
+	value = strings.ReplaceAll(value, "_", "")
+	value = strings.ReplaceAll(value, " ", "")
+	return value
+}
+
+func shouldColorize(mode string, out io.Writer) bool {
+	switch strings.ToLower(mode) {
+	case "always", "true", "yes":
+		return true
+	case "never", "false", "no":
+		return false
+	case "", "auto":
+		file, ok := out.(*os.File)
+		return ok && term.IsTerminal(int(file.Fd()))
+	default:
+		return false
 	}
 }
 
