@@ -26,7 +26,11 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-var version = "dev"
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
 
 type options struct {
 	namespace      string
@@ -47,8 +51,10 @@ type options struct {
 	suggest        bool
 	fix            bool
 	apply          bool
+	dryRun         bool
 	yes            bool
 	lang           string
+	problem        bool
 	recommend      bool
 	watch          bool
 	watchInterval  time.Duration
@@ -75,13 +81,14 @@ func NewRootCommand() *cobra.Command {
 	opts := &options{
 		events:        eventOption{enabled: true, limit: 5},
 		color:         "auto",
+		dryRun:        true,
 		watchInterval: 5 * time.Second,
 	}
 
 	root := &cobra.Command{
 		Use:           "kubectl-hpa-status",
 		Short:         "Inspect HorizontalPodAutoscaler status",
-		Version:       version,
+		Version:       buildVersion(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.ArbitraryArgs,
@@ -124,7 +131,8 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().BoolVar(&opts.explain, "explain", false, "include detailed interpretation and recommended actions")
 	root.PersistentFlags().BoolVar(&opts.suggest, "suggest", false, "include concrete suggestions for configuration changes")
 	root.PersistentFlags().BoolVar(&opts.fix, "fix", false, "show stronger fix plan with patch commands")
-	root.PersistentFlags().BoolVar(&opts.apply, "apply", false, "apply suggested HPA spec patches after confirmation")
+	root.PersistentFlags().BoolVar(&opts.apply, "apply", false, "run suggested HPA spec patch workflow")
+	root.PersistentFlags().BoolVar(&opts.dryRun, "dry-run", opts.dryRun, "use server-side dry-run for --apply; set --dry-run=false to persist changes")
 	root.PersistentFlags().BoolVarP(&opts.yes, "yes", "y", false, "skip confirmation when used with --apply")
 	root.PersistentFlags().StringVar(&opts.lang, "lang", "", "text output language: en or ja")
 	root.PersistentFlags().BoolVar(&opts.recommend, "recommend", false, "alias for --suggest")
@@ -139,10 +147,15 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newStatusCommand(opts))
 	root.AddCommand(newAnalyzeCommand(opts))
 	root.AddCommand(newListCommand(opts))
+	root.AddCommand(newScanCommand(opts))
 	root.AddCommand(newWatchCommand(opts))
 	root.AddCommand(newCompletionCommand(root))
 
 	return root
+}
+
+func buildVersion() string {
+	return fmt.Sprintf("%s (commit=%s, date=%s)", version, commit, date)
 }
 
 func newStatusCommand(opts *options) *cobra.Command {
@@ -190,7 +203,23 @@ func newListCommand(opts *options) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.sortBy, "sort-by", "", "sort list by namespace, name, current, desired, health, or issue")
 	cmd.Flags().StringVar(&opts.filter, "filter", "", "filter list by all, ok, error, limited, scaling-limited, or issue")
+	cmd.Flags().BoolVar(&opts.problem, "problem", false, "show only HPAs with visible problems")
 	return cmd
+}
+
+func newScanCommand(opts *options) *cobra.Command {
+	return &cobra.Command{
+		Use:     "scan",
+		Aliases: []string{"problems"},
+		Short:   "Scan all namespaces for HPAs with visible problems",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts.allNamespaces = true
+			opts.problem = true
+			opts.wide = true
+			return runList(cmd.Context(), cmd.OutOrStdout(), opts)
+		},
+	}
 }
 
 func newWatchCommand(opts *options) *cobra.Command {
@@ -290,6 +319,10 @@ func runList(ctx context.Context, out io.Writer, opts *options) error {
 	if opts.allNamespaces {
 		namespace = metav1.NamespaceAll
 	}
+	filter := opts.filter
+	if opts.problem && filter == "" {
+		filter = "issue"
+	}
 
 	hpas, err := client.Interface.AutoscalingV2().
 		HorizontalPodAutoscalers(namespace).
@@ -301,7 +334,7 @@ func runList(ctx context.Context, out io.Writer, opts *options) error {
 	report := hpaanalysis.ListReport{}
 	for i := range hpas.Items {
 		item := hpaanalysis.NewListItem(hpaanalysis.Analyze(&hpas.Items[i], false))
-		if matchesListFilter(item, opts.filter) {
+		if matchesListFilter(item, filter) {
 			report.Items = append(report.Items, item)
 		}
 	}
@@ -494,11 +527,35 @@ func applySuggestions(ctx context.Context, out io.Writer, opts *options, name st
 	if len(patches) == 0 {
 		return []string{"No applicable HPA patch was suggested."}, nil
 	}
+	client, err := opts.newClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kubernetes client from kubeconfig/context flags: %w", err)
+	}
+	for _, suggestion := range patches {
+		current, err := client.Interface.AutoscalingV2().
+			HorizontalPodAutoscalers(client.Namespace).
+			Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get HPA before applying suggested patch %q: %w", suggestion.Title, err)
+		}
+		if _, err := fmt.Fprintf(out, "\nProposed patch: %s\n%s\n", suggestion.Title, patchDiff(current.Spec.MinReplicas, current.Spec.MaxReplicas, suggestion.Patch)); err != nil {
+			return nil, err
+		}
+	}
+	if opts.dryRun {
+		if _, err := fmt.Fprintln(out, "Dry-run mode is enabled; Kubernetes will validate patches without persisting them. Use --dry-run=false to apply changes."); err != nil {
+			return nil, err
+		}
+	}
 	if !opts.yes {
 		if opts.in == nil {
 			opts.in = os.Stdin
 		}
-		if _, err := fmt.Fprintf(out, "Apply %d suggested patch(es) to HPA %s? [y/N]: ", len(patches), name); err != nil {
+		action := "dry-run"
+		if !opts.dryRun {
+			action = "apply"
+		}
+		if _, err := fmt.Fprintf(out, "%s %d suggested patch(es) to HPA %s? [y/N]: ", action, len(patches), name); err != nil {
 			return nil, err
 		}
 		scanner := bufio.NewScanner(opts.in)
@@ -514,21 +571,56 @@ func applySuggestions(ctx context.Context, out io.Writer, opts *options, name st
 		}
 	}
 
-	client, err := opts.newClient()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kubernetes client from kubeconfig/context flags: %w", err)
-	}
 	var applied []string
+	patchOptions := metav1.PatchOptions{}
+	if opts.dryRun {
+		patchOptions.DryRun = []string{metav1.DryRunAll}
+	}
 	for _, suggestion := range patches {
 		_, err := client.Interface.AutoscalingV2().
 			HorizontalPodAutoscalers(client.Namespace).
-			Patch(ctx, name, types.MergePatchType, []byte(suggestion.Patch), metav1.PatchOptions{})
+			Patch(ctx, name, types.MergePatchType, []byte(suggestion.Patch), patchOptions)
 		if err != nil {
 			return applied, fmt.Errorf("failed to apply suggested patch %q: %w", suggestion.Title, err)
 		}
-		applied = append(applied, fmt.Sprintf("Applied: %s", suggestion.Title))
+		if opts.dryRun {
+			applied = append(applied, fmt.Sprintf("Dry-run validated: %s", suggestion.Title))
+		} else {
+			applied = append(applied, fmt.Sprintf("Applied: %s", suggestion.Title))
+		}
 	}
 	return applied, nil
+}
+
+func patchDiff(currentMin *int32, currentMax int32, patch string) string {
+	var parsed struct {
+		Spec struct {
+			MinReplicas *int32 `json:"minReplicas"`
+			MaxReplicas *int32 `json:"maxReplicas"`
+			Behavior    any    `json:"behavior"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal([]byte(patch), &parsed); err != nil {
+		return fmt.Sprintf("  patch: %s", patch)
+	}
+	var lines []string
+	if parsed.Spec.MinReplicas != nil {
+		current := int32(1)
+		if currentMin != nil {
+			current = *currentMin
+		}
+		lines = append(lines, fmt.Sprintf("  spec.minReplicas: %d -> %d", current, *parsed.Spec.MinReplicas))
+	}
+	if parsed.Spec.MaxReplicas != nil {
+		lines = append(lines, fmt.Sprintf("  spec.maxReplicas: %d -> %d", currentMax, *parsed.Spec.MaxReplicas))
+	}
+	if parsed.Spec.Behavior != nil {
+		lines = append(lines, "  spec.behavior: updated")
+	}
+	if len(lines) == 0 {
+		lines = append(lines, fmt.Sprintf("  patch: %s", patch))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func reportHasCondition(report hpaanalysis.StatusReport, condition string) bool {

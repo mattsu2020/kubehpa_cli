@@ -1,0 +1,5 @@
+{"version":2,"width":120,"height":24,"timestamp":1780070400,"env":{"SHELL":"/bin/zsh","TERM":"xterm-256color"}}
+[0.1,"o","$ kubectl hpa status list -A --wide --problem\n"]
+[0.2,"o","NAMESPACE            NAME                             TARGET                       CURRENT  DESIRED  MIN      MAX      HEALTH              SCORE    METRICS              BEHAVIOR                     ISSUE                            CONDITIONS                           SUMMARY\n"]
+[0.3,"o","default              api                              Deployment/api               10       10       2        10       🔴 ScalingLimited   75       cpu ██████████░                                  LIMITED: TooManyReplicas            ScalingActive=True;ScalingLimited=True HPA is at maxReplicas.\n"]
+[0.4,"o","payments             worker                           Deployment/worker            2        0        1        10       🔴 ERROR            55                                                ERROR: FailedGetResourceMetric      ScalingActive=False                 HPA cannot currently compute a scaling recommendation from metrics.\n"]

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="520" viewBox="0 0 1120 520" role="img" aria-labelledby="title desc">
+  <title id="title">kubectl describe hpa versus kubectl-hpa-status</title>
+  <desc id="desc">Comparison of raw Kubernetes HPA output and actionable kubectl-hpa-status output.</desc>
+  <rect width="1120" height="520" fill="#f8fafc"/>
+  <text x="40" y="56" font-family="Inter,Arial,sans-serif" font-size="30" font-weight="700" fill="#0f172a">HPA troubleshooting: raw dump vs actionable diagnosis</text>
+  <rect x="40" y="96" width="500" height="360" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+  <rect x="580" y="96" width="500" height="360" rx="10" fill="#ffffff" stroke="#86efac"/>
+  <text x="72" y="142" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700" fill="#334155">kubectl describe hpa</text>
+  <text x="612" y="142" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700" fill="#166534">kubectl hpa status --explain</text>
+  <text x="72" y="188" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18" fill="#475569">Conditions:</text>
+  <text x="96" y="226" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" fill="#64748b">ScalingLimited=True</text>
+  <text x="96" y="258" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" fill="#64748b">Reason=TooManyReplicas</text>
+  <text x="96" y="290" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" fill="#64748b">Current / target metrics...</text>
+  <text x="72" y="352" font-family="Inter,Arial,sans-serif" font-size="17" fill="#334155">You still infer the root cause manually.</text>
+  <text x="612" y="188" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18" fill="#166534">Summary: HPA is at maxReplicas.</text>
+  <text x="612" y="226" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" fill="#15803d">Health score: 🔴 ScalingLimited 75/100</text>
+  <text x="612" y="258" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" fill="#15803d">Recommended command:</text>
+  <text x="636" y="290" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="15" fill="#166534">kubectl patch hpa api ... maxReplicas=20</text>
+  <text x="612" y="352" font-family="Inter,Arial,sans-serif" font-size="17" fill="#166534">The tool explains the signal and proposes the next action.</text>
+</svg>

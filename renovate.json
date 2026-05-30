@@ -1,0 +1,23 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": [
+        "/^k8s\\.io\\//"
+      ],
+      "groupName": "kubernetes client libraries"
+    },
+    {
+      "matchPackageNames": [
+        "/^golang\\.org\\/x\\//"
+      ],
+      "groupName": "golang x libraries"
+    }
+  ]
+}

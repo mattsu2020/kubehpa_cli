@@ -1,0 +1,3 @@
+{"version":2,"width":96,"height":30,"timestamp":1780070400,"env":{"SHELL":"/bin/zsh","TERM":"xterm-256color"}}
+[0.1,"o","$ kubectl hpa status web --explain\n"]
+[0.2,"o","HPA default/web\nTarget: Deployment/web\nReplicas: current=3 desired=5 min=2 max=10\nHealth score: 🟢 Healthy 100/100\n\nSummary: HPA currently wants to scale up.\n\nMetrics:\n  - Resource cpu current=120% target=80% ratio=1.500 note=\"current value is above target\"\n\nInterpretation:\n  - [confidence: high] desiredReplicas is greater than currentReplicas, so the HPA is recommending scale up.\n"]

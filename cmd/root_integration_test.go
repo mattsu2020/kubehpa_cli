@@ -110,6 +110,7 @@ func TestRunStatusApplyPatchesHPA(t *testing.T) {
 	var buf bytes.Buffer
 	opts := &options{
 		apply:          true,
+		dryRun:         false,
 		yes:            true,
 		in:             io.Reader(strings.NewReader("")),
 		clientOverride: fakeClient,
@@ -125,6 +126,36 @@ func TestRunStatusApplyPatchesHPA(t *testing.T) {
 	}
 	if got.Spec.MaxReplicas != 20 {
 		t.Fatalf("expected maxReplicas=20 after apply, got %d", got.Spec.MaxReplicas)
+	}
+}
+
+func TestRunStatusApplyDefaultsToDryRun(t *testing.T) {
+	hpa := kube.BuildHPA("default", "api",
+		kube.WithReplicas(10, 10),
+		kube.WithMinMax(2, 10),
+		kube.WithScalingLimitedTrue("TooManyReplicas"),
+	)
+	fakeClient := kube.NewFakeClient(hpa)
+
+	var buf bytes.Buffer
+	opts := &options{
+		apply:          true,
+		dryRun:         true,
+		yes:            true,
+		in:             io.Reader(strings.NewReader("")),
+		clientOverride: fakeClient,
+		events:         eventOption{enabled: false},
+	}
+	err := runStatus(context.Background(), &buf, opts, "api", true)
+	if err != nil {
+		t.Fatalf("runStatus returned error: %v", err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "Dry-run mode is enabled") {
+		t.Fatalf("expected dry-run warning, got:\n%s", output)
+	}
+	if !strings.Contains(output, "spec.maxReplicas: 10 -> 20") {
+		t.Fatalf("expected diff output, got:\n%s", output)
 	}
 }
 
@@ -303,6 +334,33 @@ func TestRunList_Filter(t *testing.T) {
 	}
 	if !strings.Contains(output, "api") {
 		t.Errorf("expected 'api' in filtered output, got:\n%s", output)
+	}
+}
+
+func TestRunListProblemFiltersVisibleIssues(t *testing.T) {
+	webHPA := kube.BuildHPA("default", "web", kube.WithReplicas(3, 5))
+	apiHPA := kube.BuildHPA("default", "api",
+		kube.WithReplicas(2, 2),
+		kube.WithScalingActiveFalse("FailedGetResourceMetric"),
+	)
+	fakeClient := kube.NewFakeClient(webHPA, apiHPA)
+
+	var buf bytes.Buffer
+	opts := &options{
+		problem:        true,
+		clientOverride: fakeClient,
+		events:         eventOption{enabled: false},
+	}
+	err := runList(context.Background(), &buf, opts)
+	if err != nil {
+		t.Fatalf("runList returned error: %v", err)
+	}
+	output := buf.String()
+	if strings.Contains(output, "web") {
+		t.Errorf("expected healthy HPA to be filtered out, got:\n%s", output)
+	}
+	if !strings.Contains(output, "api") {
+		t.Errorf("expected problematic HPA in output, got:\n%s", output)
 	}
 }
 

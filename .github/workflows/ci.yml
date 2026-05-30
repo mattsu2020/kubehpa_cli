@@ -35,6 +35,17 @@ jobs:
           name: coverage
           path: coverage.out
 
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
+          go-package: ./...
+
+      - name: gosec
+        uses: securego/gosec@master
+        with:
+          args: ./...
+
       - name: Create kind cluster
         uses: helm/kind-action@v1.12.0
         with:

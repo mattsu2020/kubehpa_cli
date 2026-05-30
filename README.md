@@ -4,6 +4,7 @@
 [![CodeQL](https://github.com/mattsu2020/kubectl-hpa-status/actions/workflows/codeql.yml/badge.svg)](https://github.com/mattsu2020/kubectl-hpa-status/actions/workflows/codeql.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/mattsu2020/kubectl-hpa-status.svg)](https://pkg.go.dev/github.com/mattsu2020/kubectl-hpa-status)
 [![Go Report Card](https://goreportcard.com/badge/github.com/mattsu2020/kubectl-hpa-status)](https://goreportcard.com/report/github.com/mattsu2020/kubectl-hpa-status)
+[![Release](https://img.shields.io/github/v/release/mattsu2020/kubectl-hpa-status)](https://github.com/mattsu2020/kubectl-hpa-status/releases)
 [![Krew](https://img.shields.io/badge/krew-hpa--status-blue)](https://krew.sigs.k8s.io/plugins/)
 [![Kubernetes](https://img.shields.io/badge/kubernetes-autoscaling%2Fv2-326ce5)](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
 [![Coverage](https://img.shields.io/badge/coverage-make%20coverage-informational)](#development)
@@ -14,16 +15,27 @@
 A kubectl plugin for inspecting HorizontalPodAutoscaler status with detailed
 scaling analysis using existing Kubernetes API signals.
 
+It answers three common HPA questions quickly:
+
+- Is this HPA healthy, capped, stabilized, or unable to read metrics?
+- Which visible metric or condition most likely explains the current behavior?
+- What command should I run next, and can I validate it safely first?
+
 ## Demo
 
 - Screenshot: [images/demo.png](images/demo.png)
-- asciinema recording source: [docs/demo.cast](docs/demo.cast)
+- Comparison image: [images/describe-vs-hpa-status.svg](images/describe-vs-hpa-status.svg)
+- status explain demo: [docs/status-explain.cast](docs/status-explain.cast)
+- wide list demo: [docs/list-wide.cast](docs/list-wide.cast)
+- watch demo: [docs/watch.cast](docs/watch.cast)
 
 ```sh
 kubectl hpa status list -A --wide
 kubectl hpa status <hpa-name> --suggest
 kubectl hpa status <hpa-name> --fix --apply
 ```
+
+![kubectl describe hpa versus kubectl-hpa-status](images/describe-vs-hpa-status.svg)
 
 ### Why use `kubectl-hpa-status`?
 
@@ -77,6 +89,7 @@ Available Commands:
   analyze     Analyze one HPA using visible Kubernetes API signals
   completion  Generate shell completion
   list        List HPAs and highlight visible issues
+  scan        Scan all namespaces for HPAs with visible problems
   status      Show concise status for one HPA
   watch       Watch one HPA status
 
@@ -136,6 +149,8 @@ kubectl hpa status <hpa-name> --watch --interval 5s
 kubectl hpa status <hpa-name> --watch --timeout 2m --until-condition scaling-limited
 kubectl hpa status analyze <hpa-name>
 kubectl hpa status list [-A] [--sort-by desired] [--filter scaling-limited]
+kubectl hpa status list -A --problem
+kubectl hpa status scan
 kubectl hpa status ls [-A] --wide
 kubectl hpa status watch <hpa-name> --interval 5s
 ```
@@ -155,6 +170,8 @@ kubectl-hpa-status analyze <hpa-name> -n <namespace>
 kubectl-hpa-status status <hpa-name> -n <namespace>
 kubectl-hpa-status status <hpa-name> --suggest
 kubectl-hpa-status status <hpa-name> --fix --apply
+kubectl-hpa-status status <hpa-name> --fix --apply --dry-run=false
+kubectl-hpa-status scan
 kubectl-hpa-status list -A
 kubectl-hpa-status completion zsh
 ```
@@ -177,7 +194,9 @@ Common flags:
 - `--explain`: include detailed interpretation and recommended actions
 - `--suggest`: include concrete `kubectl patch` commands when a safe HPA spec suggestion is visible
 - `--fix`: show a stronger fix plan with applicable patches
-- `--apply`: apply suggested HPA patches after confirmation; use `-y` to skip the prompt
+- `--apply`: validate suggested HPA patches with server-side dry-run by default
+- `--dry-run=false`: persist changes when used with `--apply`; still shows a diff and asks for confirmation unless `-y` is set
+- `--problem`: show only HPAs with visible problems in `list`
 - `--lang=ja` or `-o ja`: show Japanese text labels
 - `--no-interpret`: omit interpretation and show status-derived data only
 - `--events=false`: omit recent Events
@@ -217,6 +236,25 @@ It intentionally does not reimplement the HPA controller's internal decision log
 
 metrics-server was installed from the upstream release manifest with the
 kind-specific `--kubelet-insecure-tls` option.
+
+## Troubleshooting patterns
+
+| Symptom | Command | Primary signals | Likely next step |
+| --- | --- | --- | --- |
+| HPA is not scaling and metrics are missing | `kubectl hpa status <name> --explain` | `ScalingActive=False`, Events | Check metrics-server or custom/external metrics adapters |
+| Replicas are capped at the top | `kubectl hpa status <name> --suggest` | `ScalingLimited=True`, `desiredReplicas == maxReplicas` | Review capacity, then validate the suggested maxReplicas patch |
+| Scale-down looks delayed | `kubectl hpa status <name> --explain` | `AbleToScale=True`, `ScaleDownStabilized`, `spec.behavior.scaleDown` | Wait for or tune stabilization window |
+| Many HPAs need triage | `kubectl hpa status scan` | Health score, issue, conditions | Start with `ERROR`, then `ScalingLimited` |
+
+## Compatibility matrix
+
+| Environment | Status |
+| --- | --- |
+| HPA API `autoscaling/v2` | Required |
+| Kubernetes v1.35.0 | Validated |
+| metrics-server v0.8.1 on kind | Validated |
+| custom/external metrics adapters | Supported through visible HPA status; adapter-specific internals are not inspected |
+| KEDA-scaled workloads | HPA objects can be inspected; KEDA-specific analysis is future work |
 
 ## Validation matrix
 

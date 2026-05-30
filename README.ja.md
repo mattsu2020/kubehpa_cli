@@ -3,6 +3,7 @@
 [![CI](https://github.com/mattsu2020/kubectl-hpa-status/actions/workflows/ci.yml/badge.svg)](https://github.com/mattsu2020/kubectl-hpa-status/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/mattsu2020/kubectl-hpa-status/actions/workflows/codeql.yml/badge.svg)](https://github.com/mattsu2020/kubectl-hpa-status/actions/workflows/codeql.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/mattsu2020/kubectl-hpa-status.svg)](https://pkg.go.dev/github.com/mattsu2020/kubectl-hpa-status)
+[![Release](https://img.shields.io/github/v/release/mattsu2020/kubectl-hpa-status)](https://github.com/mattsu2020/kubectl-hpa-status/releases)
 [![Krew](https://img.shields.io/badge/krew-hpa--status-blue)](https://krew.sigs.k8s.io/plugins/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
@@ -10,10 +11,21 @@
 
 既存の Kubernetes API シグナルを活用し、詳細なスケーリング分析とともに HorizontalPodAutoscaler (HPA) の状態を調査するための kubectl プラグインです。
 
+このツールは、HPA運用でよくある3つの疑問にすばやく答えます。
+
+- このHPAは正常か、上限に張り付いているか、安定化中か、メトリクス取得に失敗しているか。
+- どのConditionやメトリクスが現在の挙動を説明しているか。
+- 次に実行すべきコマンドは何か、安全にdry-run検証できるか。
+
 ## デモ
 
 - スクリーンショット: [images/demo.png](images/demo.png)
-- asciinema記録ソース: [docs/demo.cast](docs/demo.cast)
+- 比較画像: [images/describe-vs-hpa-status.svg](images/describe-vs-hpa-status.svg)
+- status explainデモ: [docs/status-explain.cast](docs/status-explain.cast)
+- wide listデモ: [docs/list-wide.cast](docs/list-wide.cast)
+- watchデモ: [docs/watch.cast](docs/watch.cast)
+
+![kubectl describe hpa と kubectl-hpa-status の比較](images/describe-vs-hpa-status.svg)
 
 ### なぜ `kubectl-hpa-status` を使うべきなのか？
 
@@ -34,7 +46,10 @@ kubectl hpa status <hpa-name> -n <namespace>
 kubectl hpa status <hpa-name> --explain
 kubectl hpa status <hpa-name> --suggest
 kubectl hpa status <hpa-name> --fix --apply
+kubectl hpa status <hpa-name> --fix --apply --dry-run=false
 kubectl hpa status <hpa-name> --lang=ja
+kubectl hpa status scan
+kubectl hpa status list -A --problem
 kubectl hpa status list -A --wide --sort-by=desired --filter=scaling-limited
 kubectl hpa status ls -A -o json
 kubectl hpa status <hpa-name> --watch --timeout=2m --until-condition=scaling-limited
@@ -94,12 +109,31 @@ make e2e
 kind delete cluster --name hpa-status-dev
 ```
 
+## よくあるトラブルパターン
+
+| 症状 | コマンド | 主なシグナル | 次の一手 |
+| --- | --- | --- | --- |
+| メトリクスが取れずスケールしない | `kubectl hpa status <name> --explain` | `ScalingActive=False`, Events | metrics-server または custom/external metrics adapter を確認 |
+| レプリカ数が上限に張り付く | `kubectl hpa status <name> --suggest` | `ScalingLimited=True`, `desiredReplicas == maxReplicas` | 容量を確認し、提案されたmaxReplicasパッチをdry-run検証 |
+| スケールダウンが遅い | `kubectl hpa status <name> --explain` | `ScaleDownStabilized`, `spec.behavior.scaleDown` | stabilization windowを待つか調整 |
+| クラスタ全体を棚卸ししたい | `kubectl hpa status scan` | health score, issue, conditions | `ERROR` から優先して確認 |
+
+## 互換性マトリクス
+
+| 環境 | 状態 |
+| --- | --- |
+| HPA API `autoscaling/v2` | 必須 |
+| Kubernetes v1.35.0 | 検証済み |
+| kind上のmetrics-server v0.8.1 | 検証済み |
+| custom/external metrics adapters | HPA statusに見える範囲で対応 |
+| KEDA管理のHPA | HPAオブジェクトとして診断可能。KEDA固有分析は将来対応 |
+
 ## ロードマップ
 - [x] **インテグレーションテスト:** CI検証用の `kind` ベースE2Eテスト。
 - [x] **デモのビジュアル化:** ドキュメントへのスクリーンショットの追加。
 - [x] **Homebrew配布:** GoReleaserでHomebrew CaskとSBOMを生成。
 - [ ] **インタラクティブTUIモニタ:** watchモードをリッチなダッシュボードへ強化。
-- [ ] **バッチ分析機能:** 複数ネームスペースの全HPAを一括で診断するコマンド。
+- [x] **バッチ分析機能:** `scan` / `list -A --problem` で問題のあるHPAを一括診断。
 - [x] **Suggest/Fix機能:** `--suggest` / `--fix --apply` により、具体的なパッチ案と適用フローを表示。
 
 ## ライセンス
