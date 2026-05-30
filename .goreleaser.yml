@@ -12,6 +12,8 @@ builds:
     binary: kubectl-hpa-status
     env:
       - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/matsui/kubectl-hpa-status/cmd.version={{ .Tag }}
     goos:
       - linux
       - darwin

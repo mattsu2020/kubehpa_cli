@@ -12,6 +12,12 @@ kubectl krew install hpa-status
 kubectl hpa status <hpa-name> -n <namespace>
 ```
 
+Krew installs the plugin as `hpa-status`. For plugins whose names contain
+dashes, Krew creates a kubectl-visible symlink using underscores, so
+`hpa-status` is discoverable by kubectl as the nested command
+`kubectl hpa status`. Depending on kubectl plugin discovery behavior,
+`kubectl hpa-status status <hpa-name>` may also work.
+
 ### Manual
 
 ```sh
@@ -31,16 +37,36 @@ kubectl plugin list
 
 ```sh
 kubectl hpa status <hpa-name> [-n namespace] [--context context] [--events=false]
+kubectl hpa status list [-A] [-o wide|json|yaml]
+kubectl hpa status analyze <hpa-name>
+kubectl hpa status watch <hpa-name> --interval 5s
 ```
 
-The binary name is `kubectl-hpa-status`. In this validation environment,
-`kubectl plugin list` reported the plugin and kubectl v1.36.1 invoked it as
-the nested command above. Plugin command parsing can vary by kubectl version,
+The released binary name is `kubectl-hpa-status`. Krew links it as a kubectl
+plugin named `hpa-status`. Plugin command parsing can vary by kubectl version,
 so validate the exact invocation with:
 
 ```sh
 kubectl plugin list
 ```
+
+Direct binary usage is also supported:
+
+```sh
+kubectl-hpa-status status <hpa-name> -n <namespace>
+kubectl-hpa-status list -A
+kubectl-hpa-status completion zsh
+```
+
+Common flags:
+
+- `-n, --namespace`: namespace
+- `-A, --all-namespaces`: list HPAs across all namespaces
+- `--context`, `--kubeconfig`, `--cluster`: explicit kubeconfig selection
+- `-o wide|json|yaml`: output format
+- `--no-interpret`: omit interpretation and show status-derived data only
+- `--events=false`: omit recent Events
+- `--version`: print the plugin version
 
 The plugin reads:
 
@@ -97,6 +123,14 @@ Validated on a local kind cluster named `hpa-status-poc`.
 | tolerance-like no-scale | Memory was slightly above target (`73%/70%`, ratio approximately `1.043`) while `currentReplicas == desiredReplicas == 7` and `ScalingLimited=False`. This is consistent with tolerance-based no-scale, but existing HPA status did not explicitly expose tolerance as the reason. |
 
 ## Example output
+
+List view:
+
+```text
+NAMESPACE            NAME                             CURRENT  DESIRED  ISSUE                    SUMMARY
+default              web                              3        5                                 HPA currently wants to scale up.
+default              api                              2        2        FailedGetResourceMetric  HPA cannot currently compute a scaling recommendation from metrics.
+```
 
 Multi-metric HPA:
 
@@ -162,6 +196,21 @@ rather than exposing the controller's full decision trace.
 This plugin reports what can be inferred from existing HPA status, metrics,
 conditions, and events. It does not know the controller's internal intermediate
 calculations.
+
+## Development roadmap
+
+The repository is now structured for incremental feature work:
+
+- `cmd/`: Cobra command wiring and CLI output selection
+- `internal/kube/`: kubeconfig and Kubernetes client construction
+- `pkg/hpa/`: HPA status analysis, formatting, and unit-tested interpretation logic
+
+Near-term work:
+
+- add integration tests with kind/testenv for real HPA behavior
+- expand `list` issue detection beyond conditions and replica limits
+- add richer structured output contracts as the CLI stabilizes
+- add screenshots or terminal recordings once the output format is settled
 
 ## License
 
