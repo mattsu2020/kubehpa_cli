@@ -34,6 +34,12 @@ To verify the plugin is visible:
 kubectl plugin list
 ```
 
+The Go module path currently follows the repository import path
+`github.com/mattsu2020/kubehpa_cli`. The released plugin and binary keep the
+user-facing name `kubectl-hpa-status`. If the GitHub repository is renamed to
+`kubectl-hpa-status`, update `go.mod`, imports, and `.goreleaser.yml` ldflags in
+the same change.
+
 ## Usage
 
 ```sh
@@ -71,6 +77,8 @@ Common flags:
 - `-A, --all-namespaces`: list HPAs across all namespaces
 - `--context`, `--kubeconfig`, `--cluster`: explicit kubeconfig selection
 - `-o table|wide|json|yaml`: output format
+- `--wide`: show target, min, and max columns in table output
+- `--interpret`: include diagnostic interpretation in compact status output
 - `--no-interpret`: omit interpretation and show status-derived data only
 - `--events=false`: omit recent Events
 - `--events=3`: show the latest 3 HPA Events
@@ -207,8 +215,9 @@ conditions, and events. It does not know the controller's internal intermediate
 calculations.
 
 Interpretation lines are diagnostic inferences, not the HPA controller's
-authoritative internal decision trace. When the API does not expose a stable
-decision record, the output says so explicitly.
+authoritative internal decision trace. They include confidence labels so users
+can distinguish direct status observations from weaker interpretations. When
+the API does not expose a stable decision record, the output says so explicitly.
 
 ## Development roadmap
 

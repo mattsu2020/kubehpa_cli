@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-const limitation = "This plugin uses existing HPA status, conditions, metrics, and events. It does not expose internal controller calculations."
+const limitation = "[confidence: high] This plugin uses existing HPA status, conditions, metrics, and events. It does not expose internal controller calculations."
 
 type Analysis struct {
 	Namespace      string             `json:"namespace" yaml:"namespace"`
@@ -120,14 +120,14 @@ func Interpret(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas int32) []
 	var lines []string
 
 	if hpa.Status.ObservedGeneration != nil && *hpa.Status.ObservedGeneration < hpa.Generation {
-		lines = append(lines, fmt.Sprintf("Warning: status.observedGeneration=%d is behind metadata.generation=%d; the status may not reflect the latest spec.", *hpa.Status.ObservedGeneration, hpa.Generation))
+		lines = append(lines, fmt.Sprintf("[confidence: high] Warning: status.observedGeneration=%d is behind metadata.generation=%d; the status may not reflect the latest spec.", *hpa.Status.ObservedGeneration, hpa.Generation))
 	}
 
 	if condition := FindCondition(hpa, "ScalingActive"); condition != nil && condition.Status != corev1.ConditionTrue {
 		lines = append(lines,
-			fmt.Sprintf("ScalingActive is %s: %s - %s", condition.Status, condition.Reason, condition.Message),
-			"The HPA is not reporting a reliable scale direction while metric evaluation is inactive.",
-			"This plugin avoids treating desiredReplicas=0 as a scale-down recommendation in this state.",
+			fmt.Sprintf("[confidence: high] ScalingActive is %s: %s - %s", condition.Status, condition.Reason, condition.Message),
+			"[confidence: high] The HPA is not reporting a reliable scale direction while metric evaluation is inactive.",
+			"[confidence: high] This plugin avoids treating desiredReplicas=0 as a scale-down recommendation in this state.",
 			limitation,
 		)
 		return lines
@@ -135,44 +135,44 @@ func Interpret(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas int32) []
 
 	if condition := FindCondition(hpa, "AbleToScale"); condition != nil && condition.Status != corev1.ConditionTrue {
 		lines = append(lines,
-			fmt.Sprintf("AbleToScale is %s: %s - %s", condition.Status, condition.Reason, condition.Message))
+			fmt.Sprintf("[confidence: high] AbleToScale is %s: %s - %s", condition.Status, condition.Reason, condition.Message))
 	} else if condition := FindCondition(hpa, "AbleToScale"); condition != nil && condition.Reason == "ScaleDownStabilized" {
 		lines = append(lines,
-			fmt.Sprintf("Scale down appears stabilized: %s", condition.Message))
+			fmt.Sprintf("[confidence: medium] Scale down appears stabilized: %s", condition.Message))
 	}
 
 	if condition := FindCondition(hpa, "ScalingLimited"); condition != nil && condition.Status == corev1.ConditionTrue {
 		switch hpa.Status.DesiredReplicas {
 		case hpa.Spec.MaxReplicas:
-			lines = append(lines, "ScalingLimited reports that the visible desired replica count is constrained by maxReplicas.")
+			lines = append(lines, "[confidence: high] ScalingLimited reports that the visible desired replica count is constrained by maxReplicas.")
 		case minReplicas:
-			lines = append(lines, "ScalingLimited reports that the visible desired replica count is constrained by minReplicas.")
+			lines = append(lines, "[confidence: high] ScalingLimited reports that the visible desired replica count is constrained by minReplicas.")
 		default:
-			lines = append(lines, "The recommendation is reported as limited.")
+			lines = append(lines, "[confidence: high] The recommendation is reported as limited.")
 		}
 	}
 
 	if hpa.Status.DesiredReplicas > hpa.Status.CurrentReplicas {
-		lines = append(lines, "desiredReplicas is greater than currentReplicas, so the HPA is recommending scale up.")
+		lines = append(lines, "[confidence: high] desiredReplicas is greater than currentReplicas, so the HPA is recommending scale up.")
 	} else if hpa.Status.DesiredReplicas < hpa.Status.CurrentReplicas {
-		lines = append(lines, "desiredReplicas is less than currentReplicas, so the HPA is recommending scale down.")
+		lines = append(lines, "[confidence: high] desiredReplicas is less than currentReplicas, so the HPA is recommending scale down.")
 	} else {
-		lines = append(lines, "desiredReplicas equals currentReplicas, so no immediate replica change is visible from status.")
+		lines = append(lines, "[confidence: high] desiredReplicas equals currentReplicas, so no immediate replica change is visible from status.")
 		if hpa.Status.DesiredReplicas != hpa.Spec.MaxReplicas && hpa.Status.DesiredReplicas != minReplicas {
 			if metric, ok := MetricOutsideTarget(hpa); ok {
-				lines = append(lines, fmt.Sprintf("%s metric ratio is approximately %.3f, which is close to the target.", metric.Name, metric.Ratio))
-				lines = append(lines, "This is consistent with tolerance-based no-scale. Kubernetes commonly uses a tolerance band around the target, but HPA status does not expose tolerance as an explicit reason.")
-				lines = append(lines, "The plugin avoids claiming the exact internal reason because rounding, stabilization, or conservative metric handling may also affect the final result.")
+				lines = append(lines, fmt.Sprintf("[confidence: medium] %s metric ratio is approximately %.3f, which is close to the target.", metric.Name, metric.Ratio))
+				lines = append(lines, "[confidence: medium] This is consistent with tolerance-based no-scale. Kubernetes commonly uses a tolerance band around the target, but HPA status does not expose tolerance as an explicit reason.")
+				lines = append(lines, "[confidence: high] The plugin avoids claiming the exact internal reason because rounding, stabilization, or conservative metric handling may also affect the final result.")
 			}
 		}
 	}
 
 	if guess, ok := MostInfluentialMetric(hpa); ok && len(hpa.Status.CurrentMetrics) > 1 {
-		lines = append(lines, fmt.Sprintf("Among visible resource utilization metrics, %s has the largest distance from target (ratio %.3f).", guess.Name, guess.Ratio))
-		lines = append(lines, "This is only an impact estimate; the API does not expose per-metric replica recommendations or the final metric winner.")
+		lines = append(lines, fmt.Sprintf("[confidence: medium] Among visible resource utilization metrics, %s has the largest distance from target (ratio %.3f).", guess.Name, guess.Ratio))
+		lines = append(lines, "[confidence: high] This is only an impact estimate; the API does not expose per-metric replica recommendations or the final metric winner.")
 	} else if len(hpa.Status.CurrentMetrics) > 1 {
-		lines = append(lines, "Multiple current metrics are reported, but the API does not expose per-metric replica recommendations or which metric would have selected the recommendation before replica limits were applied.")
-		lines = append(lines, "Events and human-readable messages can hint at the contributing metric, but they are not a stable decision record.")
+		lines = append(lines, "[confidence: high] Multiple current metrics are reported, but the API does not expose per-metric replica recommendations or which metric would have selected the recommendation before replica limits were applied.")
+		lines = append(lines, "[confidence: high] Events and human-readable messages can hint at the contributing metric, but they are not a stable decision record.")
 	}
 
 	lines = append(lines, limitation)

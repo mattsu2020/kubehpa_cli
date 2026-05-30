@@ -93,6 +93,10 @@ func NewListItem(src Analysis) ListItem {
 			issue = "LIMITED: " + condition.Reason
 		}
 	}
+	if health == "OK" && src.Current == src.Desired && src.Current == src.Max {
+		health = "LIMITED"
+		issue = "LIMITED: maxReplicas"
+	}
 	return ListItem{
 		Namespace: src.Namespace,
 		Name:      src.Name,
@@ -110,18 +114,29 @@ func NewListItem(src Analysis) ListItem {
 func WriteListText(w io.Writer, report ListReport, wide bool) error {
 	var out []byte
 	if wide {
-		out = fmt.Appendf(out, "%-20s %-32s %-28s %-8s %-8s %-8s %-8s %-10s %-32s %s\n", "NAMESPACE", "NAME", "TARGET", "CURRENT", "DESIRED", "MIN", "MAX", "HEALTH", "ISSUE", "SUMMARY")
+		out = fmt.Appendf(out, "%-20s %-32s %-28s %-8s %-8s %-8s %-8s %-12s %-32s %s\n", "NAMESPACE", "NAME", "TARGET", "CURRENT", "DESIRED", "MIN", "MAX", "HEALTH", "ISSUE", "SUMMARY")
 		for _, item := range report.Items {
-			out = fmt.Appendf(out, "%-20s %-32s %-28s %-8d %-8d %-8d %-8d %-10s %-32s %s\n", item.Namespace, item.Name, item.Target, item.Current, item.Desired, item.Min, item.Max, item.Health, item.Issue, item.Summary)
+			out = fmt.Appendf(out, "%-20s %-32s %-28s %-8d %-8d %-8d %-8d %-12s %-32s %s\n", item.Namespace, item.Name, item.Target, item.Current, item.Desired, item.Min, item.Max, visualHealth(item.Health), item.Issue, item.Summary)
 		}
 		_, err := w.Write(out)
 		return err
 	}
 
-	out = fmt.Appendf(out, "%-20s %-32s %-8s %-8s %-10s %-32s %s\n", "NAMESPACE", "NAME", "CURRENT", "DESIRED", "HEALTH", "ISSUE", "SUMMARY")
+	out = fmt.Appendf(out, "%-20s %-32s %-8s %-8s %-12s %-32s %s\n", "NAMESPACE", "NAME", "CURRENT", "DESIRED", "HEALTH", "ISSUE", "SUMMARY")
 	for _, item := range report.Items {
-		out = fmt.Appendf(out, "%-20s %-32s %-8d %-8d %-10s %-32s %s\n", item.Namespace, item.Name, item.Current, item.Desired, item.Health, item.Issue, item.Summary)
+		out = fmt.Appendf(out, "%-20s %-32s %-8d %-8d %-12s %-32s %s\n", item.Namespace, item.Name, item.Current, item.Desired, visualHealth(item.Health), item.Issue, item.Summary)
 	}
 	_, err := w.Write(out)
 	return err
+}
+
+func visualHealth(health string) string {
+	switch health {
+	case "ERROR":
+		return "! ERROR"
+	case "LIMITED":
+		return "! LIMITED"
+	default:
+		return health
+	}
 }

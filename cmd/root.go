@@ -55,9 +55,9 @@ func NewRootCommand() *cobra.Command {
 				return cmd.Help()
 			}
 			if opts.watch {
-				return runWatch(cmd.Context(), cmd.OutOrStdout(), opts, args[0], !opts.noInterpret)
+				return runWatch(cmd.Context(), cmd.OutOrStdout(), opts, args[0], opts.interpret && !opts.noInterpret)
 			}
-			return runStatus(cmd.Context(), cmd.OutOrStdout(), opts, args[0], !opts.noInterpret)
+			return runStatus(cmd.Context(), cmd.OutOrStdout(), opts, args[0], opts.interpret && !opts.noInterpret)
 		},
 	}
 
@@ -67,6 +67,7 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().StringVar(&opts.kubeconfig, "kubeconfig", "", "path to kubeconfig")
 	root.PersistentFlags().StringVar(&opts.cluster, "cluster", "", "kubeconfig cluster")
 	root.PersistentFlags().StringVarP(&opts.output, "output", "o", "", "output format: table, wide, json, yaml")
+	root.PersistentFlags().BoolVar(&opts.wide, "wide", false, "show additional columns in table output")
 	root.PersistentFlags().BoolVar(&opts.interpret, "interpret", false, "include interpretation in status output")
 	root.PersistentFlags().BoolVar(&opts.noInterpret, "no-interpret", false, "omit interpretation and show raw status-derived data")
 	root.PersistentFlags().Var(&opts.events, "events", "show recent HPA events: true, false, or a number")

@@ -1,6 +1,7 @@
 package hpa
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -107,6 +108,41 @@ func TestAnalyzeScaleDownStabilized(t *testing.T) {
 	got := Analyze(hpa, true)
 	if !containsLine(got.Interpretation, "Scale down appears stabilized") {
 		t.Fatalf("expected stabilization interpretation, got %#v", got.Interpretation)
+	}
+}
+
+func TestNewListItemHighlightsImplicitMaxReplicasLimit(t *testing.T) {
+	hpa := baseHPA()
+	hpa.Status.CurrentReplicas = 10
+	hpa.Status.DesiredReplicas = 10
+	hpa.Spec.MaxReplicas = 10
+
+	got := NewListItem(Analyze(hpa, false))
+	if got.Health != "LIMITED" {
+		t.Fatalf("expected LIMITED health, got %s", got.Health)
+	}
+	if got.Issue != "LIMITED: maxReplicas" {
+		t.Fatalf("unexpected issue: %s", got.Issue)
+	}
+}
+
+func TestWriteListTextVisuallyHighlightsProblems(t *testing.T) {
+	report := ListReport{Items: []ListItem{
+		{Namespace: "default", Name: "web", Current: 2, Desired: 2, Health: "OK", Summary: "steady"},
+		{Namespace: "default", Name: "api", Current: 2, Desired: 2, Health: "ERROR", Issue: "ERROR: FailedGetResourceMetric", Summary: "broken"},
+		{Namespace: "default", Name: "worker", Current: 5, Desired: 5, Health: "LIMITED", Issue: "LIMITED: TooManyReplicas", Summary: "capped"},
+	}}
+
+	var out bytes.Buffer
+	if err := WriteListText(&out, report, false); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if !strings.Contains(text, "! ERROR") {
+		t.Fatalf("expected ERROR marker in %q", text)
+	}
+	if !strings.Contains(text, "! LIMITED") {
+		t.Fatalf("expected LIMITED marker in %q", text)
 	}
 }
 
