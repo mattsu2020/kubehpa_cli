@@ -175,8 +175,8 @@ func runStatus(ctx context.Context, out io.Writer, opts *options, name string) e
 		}
 	}
 
-	return writeOutput(out, opts.output, report, func() {
-		hpaanalysis.WriteStatusText(out, report)
+	return writeOutput(out, opts.output, report, func() error {
+		return hpaanalysis.WriteStatusText(out, report)
 	})
 }
 
@@ -209,8 +209,8 @@ func runList(ctx context.Context, out io.Writer, opts *options) error {
 	}
 
 	wide := opts.wide || opts.output == "wide"
-	return writeOutput(out, opts.output, report, func() {
-		hpaanalysis.WriteListText(out, report, wide)
+	return writeOutput(out, opts.output, report, func() error {
+		return hpaanalysis.WriteListText(out, report, wide)
 	})
 }
 
@@ -219,7 +219,9 @@ func runWatch(ctx context.Context, out io.Writer, opts *options, name string) er
 	defer ticker.Stop()
 
 	for {
-		fmt.Fprintf(out, "Updated: %s\n\n", time.Now().Format(time.RFC3339))
+		if _, err := fmt.Fprintf(out, "Updated: %s\n\n", time.Now().Format(time.RFC3339)); err != nil {
+			return err
+		}
 		if err := runStatus(ctx, out, opts, name); err != nil {
 			return err
 		}
@@ -227,16 +229,17 @@ func runWatch(ctx context.Context, out io.Writer, opts *options, name string) er
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			fmt.Fprintln(out)
+			if _, err := fmt.Fprintln(out); err != nil {
+				return err
+			}
 		}
 	}
 }
 
-func writeOutput(out io.Writer, format string, value any, writeText func()) error {
+func writeOutput(out io.Writer, format string, value any, writeText func() error) error {
 	switch format {
 	case "", "wide":
-		writeText()
-		return nil
+		return writeText()
 	case "json":
 		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
@@ -251,8 +254,4 @@ func writeOutput(out io.Writer, format string, value any, writeText func()) erro
 	default:
 		return fmt.Errorf("unsupported output format %q", format)
 	}
-}
-
-func isStructuredOutput(format string) bool {
-	return format == "json" || format == "yaml"
 }

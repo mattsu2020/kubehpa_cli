@@ -10,52 +10,56 @@ type StatusReport struct {
 	Events   []Event  `json:"events,omitempty" yaml:"events,omitempty"`
 }
 
-func WriteStatusText(w io.Writer, report StatusReport) {
+func WriteStatusText(w io.Writer, report StatusReport) error {
 	a := report.Analysis
-	fmt.Fprintf(w, "HPA %s/%s\n", a.Namespace, a.Name)
-	fmt.Fprintf(w, "Target: %s\n", a.Target)
-	fmt.Fprintf(w, "Replicas: current=%d desired=%d min=%d max=%d\n", a.Current, a.Desired, a.Min, a.Max)
+	var out []byte
+	out = fmt.Appendf(out, "HPA %s/%s\n", a.Namespace, a.Name)
+	out = fmt.Appendf(out, "Target: %s\n", a.Target)
+	out = fmt.Appendf(out, "Replicas: current=%d desired=%d min=%d max=%d\n", a.Current, a.Desired, a.Min, a.Max)
 
-	fmt.Fprintln(w)
-	fmt.Fprintf(w, "Summary: %s\n", a.Summary)
+	out = append(out, '\n')
+	out = fmt.Appendf(out, "Summary: %s\n", a.Summary)
 
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Conditions:")
+	out = append(out, '\n')
+	out = append(out, "Conditions:\n"...)
 	if len(a.Conditions) == 0 {
-		fmt.Fprintln(w, "  No conditions reported.")
+		out = append(out, "  No conditions reported.\n"...)
 	} else {
 		for _, condition := range a.Conditions {
-			fmt.Fprintf(w, "  %-15s %-7s %-24s %s\n", condition.Type, condition.Status, condition.Reason, condition.Message)
+			out = fmt.Appendf(out, "  %-15s %-7s %-24s %s\n", condition.Type, condition.Status, condition.Reason, condition.Message)
 		}
 	}
 
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Metrics:")
+	out = append(out, '\n')
+	out = append(out, "Metrics:\n"...)
 	if len(a.Metrics) == 0 {
-		fmt.Fprintln(w, "  No current metrics reported.")
+		out = append(out, "  No current metrics reported.\n"...)
 	} else {
 		for _, metric := range a.Metrics {
-			fmt.Fprintf(w, "  - %s\n", metric.Text)
+			out = fmt.Appendf(out, "  - %s\n", metric.Text)
 		}
 	}
 
 	if len(a.Interpretation) > 0 {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "Interpretation:")
+		out = append(out, '\n')
+		out = append(out, "Interpretation:\n"...)
 		for _, line := range a.Interpretation {
-			fmt.Fprintf(w, "  - %s\n", line)
+			out = fmt.Appendf(out, "  - %s\n", line)
 		}
 	}
 
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Recent events:")
+	out = append(out, '\n')
+	out = append(out, "Recent events:\n"...)
 	if len(report.Events) == 0 {
-		fmt.Fprintln(w, "  No recent events found.")
+		out = append(out, "  No recent events found.\n"...)
 	} else {
 		for _, event := range report.Events {
-			fmt.Fprintf(w, "  - %s: %s\n", event.Reason, event.Message)
+			out = fmt.Appendf(out, "  - %s: %s\n", event.Reason, event.Message)
 		}
 	}
+
+	_, err := w.Write(out)
+	return err
 }
 
 type ListItem struct {
@@ -98,17 +102,21 @@ func NewListItem(src Analysis) ListItem {
 	}
 }
 
-func WriteListText(w io.Writer, report ListReport, wide bool) {
+func WriteListText(w io.Writer, report ListReport, wide bool) error {
+	var out []byte
 	if wide {
-		fmt.Fprintf(w, "%-20s %-32s %-28s %-8s %-8s %-8s %-8s %-24s %s\n", "NAMESPACE", "NAME", "TARGET", "CURRENT", "DESIRED", "MIN", "MAX", "ISSUE", "SUMMARY")
+		out = fmt.Appendf(out, "%-20s %-32s %-28s %-8s %-8s %-8s %-8s %-24s %s\n", "NAMESPACE", "NAME", "TARGET", "CURRENT", "DESIRED", "MIN", "MAX", "ISSUE", "SUMMARY")
 		for _, item := range report.Items {
-			fmt.Fprintf(w, "%-20s %-32s %-28s %-8d %-8d %-8d %-8d %-24s %s\n", item.Namespace, item.Name, item.Target, item.Current, item.Desired, item.Min, item.Max, item.Issue, item.Summary)
+			out = fmt.Appendf(out, "%-20s %-32s %-28s %-8d %-8d %-8d %-8d %-24s %s\n", item.Namespace, item.Name, item.Target, item.Current, item.Desired, item.Min, item.Max, item.Issue, item.Summary)
 		}
-		return
+		_, err := w.Write(out)
+		return err
 	}
 
-	fmt.Fprintf(w, "%-20s %-32s %-8s %-8s %-24s %s\n", "NAMESPACE", "NAME", "CURRENT", "DESIRED", "ISSUE", "SUMMARY")
+	out = fmt.Appendf(out, "%-20s %-32s %-8s %-8s %-24s %s\n", "NAMESPACE", "NAME", "CURRENT", "DESIRED", "ISSUE", "SUMMARY")
 	for _, item := range report.Items {
-		fmt.Fprintf(w, "%-20s %-32s %-8d %-8d %-24s %s\n", item.Namespace, item.Name, item.Current, item.Desired, item.Issue, item.Summary)
+		out = fmt.Appendf(out, "%-20s %-32s %-8d %-8d %-24s %s\n", item.Namespace, item.Name, item.Current, item.Desired, item.Issue, item.Summary)
 	}
+	_, err := w.Write(out)
+	return err
 }

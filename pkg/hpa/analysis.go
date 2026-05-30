@@ -142,11 +142,12 @@ func Interpret(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas int32) []
 	}
 
 	if condition := FindCondition(hpa, "ScalingLimited"); condition != nil && condition.Status == corev1.ConditionTrue {
-		if hpa.Status.DesiredReplicas == hpa.Spec.MaxReplicas {
+		switch hpa.Status.DesiredReplicas {
+		case hpa.Spec.MaxReplicas:
 			lines = append(lines, "ScalingLimited reports that the visible desired replica count is constrained by maxReplicas.")
-		} else if hpa.Status.DesiredReplicas == minReplicas {
+		case minReplicas:
 			lines = append(lines, "ScalingLimited reports that the visible desired replica count is constrained by minReplicas.")
-		} else {
+		default:
 			lines = append(lines, "The recommendation is reported as limited.")
 		}
 	}
