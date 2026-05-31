@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `scan` and `list --problem` for cluster-wide HPA problem triage.
 - Added reusable status, list, and watch asciinema demo sources plus a comparison visual.
 - Added a larger SVG screenshot gallery covering explain, list, watch, suggest, dry-run apply, Japanese output, JSON, and common failure states.
+- Added architecture, security, RBAC, and richer issue/PR documentation.
+- Added `version` subcommand for build metadata.
 
 ### Changed
 - Upgraded Kubernetes client libraries to `k8s.io/*` v0.35.0.
@@ -26,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added commit and build date to release version metadata.
 - Added safety preconditions and warnings to structured suggestions, and made copy-paste patch commands dry-run by default.
 - Expanded E2E command coverage for Japanese output and cluster-wide `scan`.
+- Upload coverage to Codecov from CI while keeping coverage upload non-blocking.
 
 ## [0.2.0] - 2026-05-30
 

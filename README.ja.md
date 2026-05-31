@@ -8,6 +8,7 @@
 [![GoReleaser](https://img.shields.io/badge/release-GoReleaser-00add8)](https://goreleaser.com/)
 [![golangci-lint](https://img.shields.io/badge/lint-golangci--lint-blue)](https://golangci-lint.run/)
 [![Krew](https://img.shields.io/badge/krew-hpa--status-blue)](https://krew.sigs.k8s.io/plugins/)
+[![Codecov](https://codecov.io/gh/mattsu2020/kubectl-hpa-status/branch/main/graph/badge.svg)](https://codecov.io/gh/mattsu2020/kubectl-hpa-status)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 ![kubectl-hpa-status demo](images/demo.png)
@@ -31,6 +32,7 @@ English README: [README.md](README.md)
 - status explainデモ: [docs/status-explain.cast](docs/status-explain.cast)
 - wide listデモ: [docs/list-wide.cast](docs/list-wide.cast)
 - watchデモ: [docs/watch.cast](docs/watch.cast)
+- `--explain` から `--suggest`、`--fix --apply` までの流れ: [docs/fix-flow.cast](docs/fix-flow.cast)
 
 ![kubectl describe hpa と kubectl-hpa-status の比較](images/describe-vs-hpa-status.svg)
 
@@ -47,6 +49,8 @@ English README: [README.md](README.md)
 | メトリクス取得失敗 | [metrics-failure.svg](images/metrics-failure.svg) |
 | スケールダウン安定化 | [stabilized-output.svg](images/stabilized-output.svg) |
 | 複数メトリクス推定 | [multi-metric-output.svg](images/multi-metric-output.svg) |
+
+Social preview画像の元ファイル: [images/social-preview.svg](images/social-preview.svg)
 
 ### なぜ `kubectl-hpa-status` を使うべきなのか？
 
@@ -112,6 +116,9 @@ sudo mv ./kubectl-hpa-status /usr/local/bin/
 kubectl hpa status <hpa-name> -n <namespace>
 ```
 
+読み取り専用RBACと、`--apply --dry-run=false` 用のpatch権限例は
+[docs/rbac.yaml](docs/rbac.yaml) を参照してください。
+
 ## 開発
 
 ```sh
@@ -121,6 +128,12 @@ make coverage
 make lint
 make release-check
 ```
+
+設計・セキュリティ・コントリビューション方針:
+
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [SECURITY.md](SECURITY.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
 
 kindを使ったE2Eテスト:
 

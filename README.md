@@ -10,7 +10,7 @@
 [![golangci-lint](https://img.shields.io/badge/lint-golangci--lint-blue)](https://golangci-lint.run/)
 [![Krew](https://img.shields.io/badge/krew-hpa--status-blue)](https://krew.sigs.k8s.io/plugins/)
 [![Kubernetes](https://img.shields.io/badge/kubernetes-autoscaling%2Fv2-326ce5)](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
-[![Coverage](https://img.shields.io/badge/coverage-make%20coverage-informational)](#development)
+[![Codecov](https://codecov.io/gh/mattsu2020/kubectl-hpa-status/branch/main/graph/badge.svg)](https://codecov.io/gh/mattsu2020/kubectl-hpa-status)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 ![kubectl-hpa-status demo](images/demo.png)
@@ -37,6 +37,7 @@ release artifacts, module paths, or install commands.
 - status explain demo: [docs/status-explain.cast](docs/status-explain.cast)
 - wide list demo: [docs/list-wide.cast](docs/list-wide.cast)
 - watch demo: [docs/watch.cast](docs/watch.cast)
+- explain to suggest to fix flow: [docs/fix-flow.cast](docs/fix-flow.cast)
 
 | Workflow | Visual |
 | --- | --- |
@@ -51,6 +52,8 @@ release artifacts, module paths, or install commands.
 | metrics failure | [metrics-failure.svg](images/metrics-failure.svg) |
 | scale-down stabilization | [stabilized-output.svg](images/stabilized-output.svg) |
 | multi-metric estimate | [multi-metric-output.svg](images/multi-metric-output.svg) |
+
+Social preview source: [images/social-preview.svg](images/social-preview.svg).
 
 ```sh
 kubectl hpa status list -A --wide
@@ -159,6 +162,10 @@ To verify the plugin is visible:
 ```sh
 kubectl plugin list
 ```
+
+Minimum readonly RBAC and optional patch RBAC examples are available in
+[docs/rbac.yaml](docs/rbac.yaml). The plugin only needs `patch` permission when
+you intentionally use `--apply --dry-run=false`.
 
 The Go module path, GitHub repository, release metadata, and user-facing binary
 name now all use `github.com/mattsu2020/kubectl-hpa-status` /
@@ -405,6 +412,12 @@ Release dry-run and Krew archive validation:
 ```sh
 make krew
 ```
+
+Contributor-facing design and safety notes:
+
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [SECURITY.md](SECURITY.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Findings
 
