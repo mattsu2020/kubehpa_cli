@@ -4,6 +4,7 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -159,5 +160,84 @@ func BuildEvent(namespace, hpaName, reason, message string) *corev1.Event {
 		},
 		Reason:  reason,
 		Message: message,
+	}
+}
+
+// WithExternalMetric adds an external metric spec (without current status) to simulate
+// a custom/external metrics adapter that is not configured.
+func WithExternalMetric(name string, targetValue string) HPAOption {
+	return func(hpa *autoscalingv2.HorizontalPodAutoscaler) {
+		target := resource.MustParse(targetValue)
+		hpa.Spec.Metrics = append(hpa.Spec.Metrics, autoscalingv2.MetricSpec{
+			Type: autoscalingv2.ExternalMetricSourceType,
+			External: &autoscalingv2.ExternalMetricSource{
+				Metric: autoscalingv2.MetricIdentifier{Name: name},
+				Target: autoscalingv2.MetricTarget{Type: autoscalingv2.ValueMetricType, Value: &target},
+			},
+		})
+	}
+}
+
+// WithExternalMetricWithStatus adds an external metric spec with current status.
+func WithExternalMetricWithStatus(name string, targetValue, currentValue string) HPAOption {
+	return func(hpa *autoscalingv2.HorizontalPodAutoscaler) {
+		target := resource.MustParse(targetValue)
+		current := resource.MustParse(currentValue)
+		hpa.Spec.Metrics = append(hpa.Spec.Metrics, autoscalingv2.MetricSpec{
+			Type: autoscalingv2.ExternalMetricSourceType,
+			External: &autoscalingv2.ExternalMetricSource{
+				Metric: autoscalingv2.MetricIdentifier{Name: name},
+				Target: autoscalingv2.MetricTarget{Type: autoscalingv2.ValueMetricType, Value: &target},
+			},
+		})
+		hpa.Status.CurrentMetrics = append(hpa.Status.CurrentMetrics, autoscalingv2.MetricStatus{
+			Type: autoscalingv2.ExternalMetricSourceType,
+			External: &autoscalingv2.ExternalMetricStatus{
+				Metric:  autoscalingv2.MetricIdentifier{Name: name},
+				Current: autoscalingv2.MetricValueStatus{Value: &current},
+			},
+		})
+	}
+}
+
+// WithScaleDownStabilized adds AbleToScale condition with ScaleDownStabilized reason.
+func WithScaleDownStabilized() HPAOption {
+	return func(hpa *autoscalingv2.HorizontalPodAutoscaler) {
+		hpa.Status.Conditions = append(hpa.Status.Conditions, autoscalingv2.HorizontalPodAutoscalerCondition{
+			Type:   autoscalingv2.AbleToScale,
+			Status: corev1.ConditionTrue,
+			Reason: "ScaleDownStabilized",
+		})
+	}
+}
+
+// WithBehavior sets scaleDown stabilization window.
+func WithScaleDownStabilizationWindow(seconds int32) HPAOption {
+	return func(hpa *autoscalingv2.HorizontalPodAutoscaler) {
+		if hpa.Spec.Behavior == nil {
+			hpa.Spec.Behavior = &autoscalingv2.HorizontalPodAutoscalerBehavior{}
+		}
+		hpa.Spec.Behavior.ScaleDown = &autoscalingv2.HPAScalingRules{
+			StabilizationWindowSeconds: &seconds,
+		}
+	}
+}
+
+// WithKEDALabels adds KEDA-specific labels to the HPA.
+func WithKEDALabels(scaledObjectName string) HPAOption {
+	return func(hpa *autoscalingv2.HorizontalPodAutoscaler) {
+		if hpa.Labels == nil {
+			hpa.Labels = map[string]string{}
+		}
+		hpa.Labels["app.kubernetes.io/managed-by"] = "keda-operator"
+		hpa.Labels["scaledobject.keda.sh/name"] = scaledObjectName
+	}
+}
+
+// WithDesiredAtMax sets desiredReplicas equal to maxReplicas to simulate implicit max cap.
+func WithDesiredAtMax() HPAOption {
+	return func(hpa *autoscalingv2.HorizontalPodAutoscaler) {
+		hpa.Status.CurrentReplicas = hpa.Spec.MaxReplicas
+		hpa.Status.DesiredReplicas = hpa.Spec.MaxReplicas
 	}
 }

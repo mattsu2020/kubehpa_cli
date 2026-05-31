@@ -175,6 +175,38 @@ func WriteStatusTextWithOptions(w io.Writer, report StatusReport, opts StatusTex
 		}
 	}
 
+	if a.KEDAInfo != nil {
+		out = append(out, '\n')
+		out = fmt.Appendf(out, "%s:\n", labels.KEDA)
+		out = fmt.Appendf(out, "  ScaledObject: %s\n", a.KEDAInfo.ScaledObjectName)
+		if len(a.KEDAInfo.Triggers) > 0 {
+			triggerNames := make([]string, 0, len(a.KEDAInfo.Triggers))
+			for _, t := range a.KEDAInfo.Triggers {
+				if t.Name != "" {
+					triggerNames = append(triggerNames, fmt.Sprintf("%s (%s)", t.Type, t.Name))
+				} else {
+					triggerNames = append(triggerNames, t.Type)
+				}
+			}
+			out = fmt.Appendf(out, "  Triggers: %s\n", strings.Join(triggerNames, ", "))
+		}
+		if a.KEDAInfo.PollingInterval != nil {
+			out = fmt.Appendf(out, "  Polling interval: %ds\n", *a.KEDAInfo.PollingInterval)
+		}
+		if a.KEDAInfo.CooldownPeriod != nil {
+			out = fmt.Appendf(out, "  Cooldown period: %ds\n", *a.KEDAInfo.CooldownPeriod)
+		}
+		if a.KEDAInfo.MinReplicaCount != nil {
+			out = fmt.Appendf(out, "  Min replica count: %d\n", *a.KEDAInfo.MinReplicaCount)
+		}
+		if a.KEDAInfo.MaxReplicaCount != nil {
+			out = fmt.Appendf(out, "  Max replica count: %d\n", *a.KEDAInfo.MaxReplicaCount)
+		}
+		for _, line := range a.KEDAInfo.Lines {
+			out = fmt.Appendf(out, "  - %s\n", theme.InterpretationLine(line))
+		}
+	}
+
 	out = append(out, '\n')
 	out = fmt.Appendf(out, "%s:\n", labels.Events)
 	if len(report.Events) == 0 {
@@ -202,6 +234,7 @@ type labels struct {
 	Fix            string
 	Interpretation string
 	Debug          string
+	KEDA           string
 	Events         string
 	Risk           string
 	Precondition   string
@@ -223,6 +256,7 @@ func textLabels(lang string) labels {
 			Fix:            "修正プラン",
 			Interpretation: "解釈",
 			Debug:          "デバッグ",
+			KEDA:           "KEDA",
 			Events:         "最近のイベント",
 			Risk:           "リスク",
 			Precondition:   "前提条件",
@@ -242,6 +276,7 @@ func textLabels(lang string) labels {
 		Fix:            "Fix plan",
 		Interpretation: "Interpretation",
 		Debug:          "Debug",
+		KEDA:           "KEDA",
 		Events:         "Recent events",
 		Risk:           "risk",
 		Precondition:   "precondition",

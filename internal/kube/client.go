@@ -6,6 +6,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 type Options struct {
@@ -51,22 +52,8 @@ func NewClient(opts Options, extra ...ClientOption) (*Client, error) {
 		return c, nil
 	}
 
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if opts.Kubeconfig != "" {
-		loadingRules.ExplicitPath = opts.Kubeconfig
-	} else if loadingRules.ExplicitPath == "" {
-		if home := homeDir(); home != "" {
-			loadingRules.ExplicitPath = filepath.Join(home, ".kube", "config")
-		}
-	}
-
-	overrides := &clientcmd.ConfigOverrides{}
-	if opts.Context != "" {
-		overrides.CurrentContext = opts.Context
-	}
-	if opts.Cluster != "" {
-		overrides.Context.Cluster = opts.Cluster
-	}
+	loadingRules := newLoadingRules(opts)
+	overrides := newOverrides(opts)
 
 	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
 
@@ -90,4 +77,27 @@ func NewClient(opts Options, extra ...ClientOption) (*Client, error) {
 	}
 
 	return &Client{Interface: client, Namespace: namespace}, nil
+}
+
+func newLoadingRules(opts Options) *clientcmd.ClientConfigLoadingRules {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if opts.Kubeconfig != "" {
+		loadingRules.ExplicitPath = opts.Kubeconfig
+	} else if loadingRules.ExplicitPath == "" {
+		if home := homeDir(); home != "" {
+			loadingRules.ExplicitPath = filepath.Join(home, ".kube", "config")
+		}
+	}
+	return loadingRules
+}
+
+func newOverrides(opts Options) *clientcmd.ConfigOverrides {
+	overrides := &clientcmd.ConfigOverrides{}
+	if opts.Context != "" {
+		overrides.CurrentContext = opts.Context
+	}
+	if opts.Cluster != "" {
+		overrides.Context = clientcmdapi.Context{Cluster: opts.Cluster}
+	}
+	return overrides
 }

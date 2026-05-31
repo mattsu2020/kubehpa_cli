@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
+	"github.com/mattsu2020/kubectl-hpa-status/internal/kube"
 	"github.com/mattsu2020/kubectl-hpa-status/internal/style"
 	hpaanalysis "github.com/mattsu2020/kubectl-hpa-status/pkg/hpa"
 	"github.com/spf13/cobra"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -95,5 +98,71 @@ func buildStatusReport(ctx context.Context, opts *options, name string, includeI
 		}
 	}
 
+	if opts.keda {
+		report.Analysis.KEDAInfo = enrichKEDA(ctx, opts, hpa)
+	}
+
 	return report, nil
+}
+
+func enrichKEDA(ctx context.Context, opts *options, hpa *autoscalingv2.HorizontalPodAutoscaler) *hpaanalysis.KEDAAnalysis {
+	isKEDA, _ := kube.DetectKEDA(hpa)
+	if !isKEDA {
+		return nil
+	}
+
+	dynClient, _, err := kube.NewDynamicClient(kube.Options{
+		Namespace:  opts.namespace,
+		Context:    opts.contextName,
+		Kubeconfig: opts.kubeconfig,
+		Cluster:    opts.cluster,
+	})
+	if err != nil {
+		return &hpaanalysis.KEDAAnalysis{
+			Lines: []string{fmt.Sprintf("[confidence: high] HPA appears KEDA-managed but dynamic client failed: %v", err)},
+		}
+	}
+
+	scaledObject, err := kube.FindScaledObjectForHPA(ctx, dynClient, nil, hpa)
+	if err != nil {
+		return &hpaanalysis.KEDAAnalysis{
+			Lines: []string{fmt.Sprintf("[confidence: high] HPA appears KEDA-managed but no ScaledObject found: %v", err)},
+		}
+	}
+
+	info := kube.ExtractKEDAInfo(scaledObject)
+
+	triggers := make([]hpaanalysis.KEDATriggerSummary, 0, len(info.Triggers))
+	for _, t := range info.Triggers {
+		triggers = append(triggers, hpaanalysis.KEDATriggerSummary{
+			Type: t.Type,
+			Name: t.Name,
+		})
+	}
+
+	var conditionLines []string
+	for _, c := range info.Conditions {
+		if strings.EqualFold(c.Status, "False") {
+			conditionLines = append(conditionLines, fmt.Sprintf("condition %q is False (reason: %s): %s", c.Type, c.Reason, c.Message))
+		}
+	}
+
+	kedaAnalysis := &hpaanalysis.KEDAAnalysis{
+		ScaledObjectName: info.ScaledObjectName,
+		Triggers:         triggers,
+		PollingInterval:  info.PollingInterval,
+		CooldownPeriod:   info.CooldownPeriod,
+		MinReplicaCount:  info.MinReplicaCount,
+		MaxReplicaCount:  info.MaxReplicaCount,
+		Lines:            conditionLines,
+	}
+
+	if len(conditionLines) == 0 && len(info.Conditions) > 0 {
+		kedaAnalysis.Lines = []string{fmt.Sprintf("ScaledObject reports %d condition(s), all healthy.", len(info.Conditions))}
+	}
+
+	// Add KEDA interpretation lines to the analysis.
+	kedaAnalysis.Lines = append(kedaAnalysis.Lines, hpaanalysis.AnalyzeKEDA(hpa, kedaAnalysis)...)
+
+	return kedaAnalysis
 }

@@ -54,6 +54,7 @@ type Analysis struct {
 	Actions           []string           `json:"recommendedActions,omitempty" yaml:"recommendedActions,omitempty"`
 	Suggestions       []Suggestion       `json:"suggestions,omitempty" yaml:"suggestions,omitempty"`
 	Interpretation    []string           `json:"interpretation,omitempty" yaml:"interpretation,omitempty"`
+	KEDAInfo          *KEDAAnalysis      `json:"keda,omitempty" yaml:"keda,omitempty"`
 	Debug             []string           `json:"debug,omitempty" yaml:"debug,omitempty"`
 	ImpactMetric      *MetricImpactGuess `json:"impactMetric,omitempty" yaml:"impactMetric,omitempty"`
 	CreationTimestamp metav1.Time        `json:"creationTimestamp,omitempty" yaml:"creationTimestamp,omitempty"`
@@ -99,6 +100,24 @@ type Suggestion struct {
 	Preconditions []string `json:"preconditions,omitempty" yaml:"preconditions,omitempty"`
 	Warnings      []string `json:"warnings,omitempty" yaml:"warnings,omitempty"`
 	Apply         bool     `json:"apply,omitempty" yaml:"apply,omitempty"`
+}
+
+// KEDAAnalysis holds KEDA-specific information attached to an HPA Analysis.
+// Populated only when --keda is enabled and the HPA is KEDA-managed.
+type KEDAAnalysis struct {
+	ScaledObjectName string               `json:"scaledObjectName" yaml:"scaledObjectName"`
+	Triggers         []KEDATriggerSummary `json:"triggers,omitempty" yaml:"triggers,omitempty"`
+	PollingInterval  *int32               `json:"pollingInterval,omitempty" yaml:"pollingInterval,omitempty"`
+	CooldownPeriod   *int32               `json:"cooldownPeriod,omitempty" yaml:"cooldownPeriod,omitempty"`
+	MinReplicaCount  *int32               `json:"minReplicaCount,omitempty" yaml:"minReplicaCount,omitempty"`
+	MaxReplicaCount  *int32               `json:"maxReplicaCount,omitempty" yaml:"maxReplicaCount,omitempty"`
+	Lines            []string             `json:"lines,omitempty" yaml:"lines,omitempty"`
+}
+
+// KEDATriggerSummary is a display-oriented summary of a KEDA trigger.
+type KEDATriggerSummary struct {
+	Type string `json:"type" yaml:"type"`
+	Name string `json:"name,omitempty" yaml:"name,omitempty"`
 }
 
 func Analyze(src *autoscalingv2.HorizontalPodAutoscaler, includeInterpretation bool) Analysis {
