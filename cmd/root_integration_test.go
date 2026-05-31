@@ -364,6 +364,33 @@ func TestRunListProblemFiltersVisibleIssues(t *testing.T) {
 	}
 }
 
+func TestRunListHealthScoreThresholdFiltersByScore(t *testing.T) {
+	webHPA := kube.BuildHPA("default", "web", kube.WithReplicas(3, 5))
+	apiHPA := kube.BuildHPA("default", "api",
+		kube.WithReplicas(2, 2),
+		kube.WithScalingActiveFalse("FailedGetResourceMetric"),
+	)
+	fakeClient := kube.NewFakeClient(webHPA, apiHPA)
+
+	var buf bytes.Buffer
+	opts := &options{
+		healthScoreMax: 80,
+		clientOverride: fakeClient,
+		events:         eventOption{enabled: false},
+	}
+	err := runList(context.Background(), &buf, opts)
+	if err != nil {
+		t.Fatalf("runList returned error: %v", err)
+	}
+	output := buf.String()
+	if strings.Contains(output, "web") {
+		t.Errorf("expected healthy HPA to be filtered out, got:\n%s", output)
+	}
+	if !strings.Contains(output, "api") {
+		t.Errorf("expected low-score HPA in output, got:\n%s", output)
+	}
+}
+
 func TestRunList_SortByDesired(t *testing.T) {
 	smallHPA := kube.BuildHPA("default", "small", kube.WithReplicas(1, 2))
 	largeHPA := kube.BuildHPA("default", "large", kube.WithReplicas(5, 10))

@@ -14,6 +14,10 @@ spec:
     to provide human-readable analysis without reimplementing the HPA
     controller's internal decision logic.
   caveats: |
+    Krew installs the plugin as hpa-status. kubectl discovers that as
+    kubectl hpa_status. This project also documents kubectl hpa status for
+    nested plugin usage where kubectl plugin discovery supports it.
+
     Try:
       kubectl hpa_status list -A --wide
       kubectl hpa_status status <hpa-name> --suggest

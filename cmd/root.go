@@ -43,6 +43,7 @@ type options struct {
 	wide           bool
 	sortBy         string
 	filter         string
+	healthScoreMax int
 	color          string
 	events         eventOption
 	interpret      bool
@@ -79,10 +80,11 @@ func (o *options) newClient() (*kube.Client, error) {
 
 func NewRootCommand() *cobra.Command {
 	opts := &options{
-		events:        eventOption{enabled: true, limit: 5},
-		color:         "auto",
-		dryRun:        true,
-		watchInterval: 5 * time.Second,
+		events:         eventOption{enabled: true, limit: 5},
+		color:          "auto",
+		dryRun:         true,
+		healthScoreMax: -1,
+		watchInterval:  5 * time.Second,
 	}
 
 	root := &cobra.Command{
@@ -204,6 +206,7 @@ func newListCommand(opts *options) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.sortBy, "sort-by", "", "sort list by namespace, name, current, desired, health, or issue")
 	cmd.Flags().StringVar(&opts.filter, "filter", "", "filter list by all, ok, error, limited, scaling-limited, or issue")
+	cmd.Flags().IntVar(&opts.healthScoreMax, "health-score", -1, "show only HPAs with health score at or below this threshold")
 	cmd.Flags().BoolVar(&opts.problem, "problem", false, "show only HPAs with visible problems")
 	return cmd
 }
@@ -347,7 +350,7 @@ func runList(ctx context.Context, out io.Writer, opts *options) error {
 	report := hpaanalysis.ListReport{}
 	for i := range hpas.Items {
 		item := hpaanalysis.NewListItem(hpaanalysis.Analyze(&hpas.Items[i], false))
-		if matchesListFilter(item, filter) {
+		if matchesListFilter(item, filter) && matchesHealthScoreThreshold(item, opts.healthScoreMax) {
 			report.Items = append(report.Items, item)
 		}
 	}
@@ -475,6 +478,16 @@ func matchesListFilter(item hpaanalysis.ListItem, filter string) bool {
 	default:
 		return strings.EqualFold(item.Health, filter) || strings.Contains(normalizeSelector(item.Issue), normalizeSelector(filter))
 	}
+}
+
+func matchesHealthScoreThreshold(item hpaanalysis.ListItem, threshold int) bool {
+	if threshold <= 0 {
+		return true
+	}
+	if threshold > 100 {
+		threshold = 100
+	}
+	return item.HealthScore <= threshold
 }
 
 func sortListItems(items []hpaanalysis.ListItem, sortBy string) {

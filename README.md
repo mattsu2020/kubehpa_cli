@@ -5,6 +5,7 @@
 [![Release](https://github.com/mattsu2020/kubectl-hpa-status/actions/workflows/release.yml/badge.svg)](https://github.com/mattsu2020/kubectl-hpa-status/actions/workflows/release.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/mattsu2020/kubectl-hpa-status.svg)](https://pkg.go.dev/github.com/mattsu2020/kubectl-hpa-status)
 [![Go Report Card](https://goreportcard.com/badge/github.com/mattsu2020/kubectl-hpa-status)](https://goreportcard.com/report/github.com/mattsu2020/kubectl-hpa-status)
+[![Stars](https://img.shields.io/github/stars/mattsu2020/kubectl-hpa-status?style=social)](https://github.com/mattsu2020/kubectl-hpa-status/stargazers)
 [![Release](https://img.shields.io/github/v/release/mattsu2020/kubectl-hpa-status)](https://github.com/mattsu2020/kubectl-hpa-status/releases)
 [![GoReleaser](https://img.shields.io/badge/release-GoReleaser-00add8)](https://goreleaser.com/)
 [![golangci-lint](https://img.shields.io/badge/lint-golangci--lint-blue)](https://golangci-lint.run/)
@@ -136,9 +137,11 @@ kubectl hpa status <hpa-name> --suggest
 
 Krew installs the plugin as `hpa-status`. For plugins whose names contain
 dashes, Krew creates a kubectl-visible symlink using underscores, so
-`hpa-status` is discoverable by kubectl as the nested command
-`kubectl hpa status`. Depending on kubectl plugin discovery behavior,
-`kubectl hpa-status status <hpa-name>` may also work.
+`hpa-status` is discoverable by kubectl as `kubectl hpa_status`.
+**This project documents `kubectl hpa status` as the preferred nested command
+when your kubectl plugin discovery supports it; if it does not, use
+`kubectl hpa_status status <hpa-name>` or the direct binary
+`kubectl-hpa-status status <hpa-name>`.**
 
 ### Homebrew
 
@@ -237,6 +240,7 @@ Common flags:
 - `--wide`: show target, min, and max columns in table output
 - `--sort-by namespace|name|current|desired|health|health-score|issue`: sort `list` output
 - `--filter all|ok|error|limited|scaling-limited|issue`: filter `list` output
+- `--health-score <threshold>`: show only HPAs whose health score is at or below the positive threshold
 - `--color auto|always|never`: colorize table output
 - `--interpret`: include diagnostic interpretation in compact status output
 - `--explain`: include detailed interpretation and recommended actions
@@ -313,6 +317,19 @@ Suggestions are intentionally conservative:
 3. Persisting changes requires `--dry-run=false`; this is never the default.
 4. maxReplicas suggestions include preconditions and warnings because raising a ceiling can affect node capacity, quotas, cost, and downstream systems.
 5. The preview explains the expected effect, such as allowing immediate scale-up if metrics still require more replicas.
+
+Dry-run modes:
+
+- `--dry-run=server` asks the Kubernetes API server to validate the patch with admission and defaulting, but it does not persist the change.
+- `--dry-run=client` only validates locally in kubectl and may miss server-side admission behavior.
+- `kubectl-hpa-status --apply` uses server-side dry-run by default. Persistent changes require `--dry-run=false`.
+
+## Limitations
+
+- The Kubernetes HPA API does not expose the controller's exact internal scaling decision trace.
+- Multi-metric "winner" detection is a best-effort impact estimate from visible `currentMetrics` and `spec.metrics`.
+- Tolerance, conservative handling of missing metrics, not-ready pods, and stabilization recommendation history are not fully exposed in HPA status.
+- Events are useful recent context, but they are not treated as a durable structured decision log.
 
 ## CI/CD
 

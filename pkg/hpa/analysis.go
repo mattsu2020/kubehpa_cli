@@ -13,6 +13,16 @@ import (
 
 const limitation = "[confidence: high] This plugin uses existing HPA status, conditions, metrics, and events. It does not expose internal controller calculations."
 
+const (
+	healthScoreMax                   = 100
+	healthPenaltyScalingInactive     = 45
+	healthPenaltyUnableToScale       = 35
+	healthPenaltyScalingLimited      = 25
+	healthPenaltyImplicitMaxReplicas = 20
+	healthPenaltyScaleDownStabilized = 10
+	healthPenaltyAtMinimumReplicas   = 5
+)
+
 type Analysis struct {
 	Namespace         string             `json:"namespace" yaml:"namespace"`
 	Name              string             `json:"name" yaml:"name"`
@@ -77,6 +87,17 @@ type Suggestion struct {
 }
 
 func Analyze(src *autoscalingv2.HorizontalPodAutoscaler, includeInterpretation bool) Analysis {
+	if src == nil {
+		return Analysis{
+			Health:      "ERROR",
+			HealthScore: 0,
+			Summary:     "HPA data is unavailable.",
+			Interpretation: []string{
+				"[confidence: high] HPA input was nil; no Kubernetes status can be analyzed.",
+			},
+		}
+	}
+
 	minReplicas := int32(1)
 	if src.Spec.MinReplicas != nil {
 		minReplicas = *src.Spec.MinReplicas
@@ -124,36 +145,40 @@ func Analyze(src *autoscalingv2.HorizontalPodAutoscaler, includeInterpretation b
 }
 
 func Health(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas int32) (string, int) {
-	score := 100
+	if hpa == nil {
+		return "ERROR", 0
+	}
+
+	score := healthScoreMax
 	health := "OK"
 	for _, condition := range hpa.Status.Conditions {
 		switch {
 		case condition.Type == "ScalingActive" && condition.Status != corev1.ConditionTrue:
-			score -= 45
+			score -= healthPenaltyScalingInactive
 			health = "ERROR"
 		case condition.Type == "AbleToScale" && condition.Status != corev1.ConditionTrue:
-			score -= 35
+			score -= healthPenaltyUnableToScale
 			health = "ERROR"
 		case condition.Type == "ScalingLimited" && condition.Status == corev1.ConditionTrue:
-			score -= 25
+			score -= healthPenaltyScalingLimited
 			if health != "ERROR" {
 				health = "LIMITED"
 			}
 		case condition.Type == "AbleToScale" && condition.Reason == "ScaleDownStabilized":
-			score -= 10
+			score -= healthPenaltyScaleDownStabilized
 			if health == "OK" {
 				health = "STABILIZED"
 			}
 		}
 	}
 	if hpa.Status.CurrentReplicas == hpa.Status.DesiredReplicas && hpa.Status.CurrentReplicas == hpa.Spec.MaxReplicas {
-		score -= 20
+		score -= healthPenaltyImplicitMaxReplicas
 		if health == "OK" {
 			health = "LIMITED"
 		}
 	}
 	if hpa.Status.DesiredReplicas == minReplicas {
-		score -= 5
+		score -= healthPenaltyAtMinimumReplicas
 	}
 	if score < 0 {
 		score = 0

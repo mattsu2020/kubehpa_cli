@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Renovate configuration, govulncheck, and gosec CI checks.
 - Added GoReleaser SBOM and Homebrew Cask metadata for the dedicated tap.
 - Added `scan` and `list --problem` for cluster-wide HPA problem triage.
+- Added `list --health-score <threshold>` for filtering HPAs by low health score.
 - Added reusable status, list, and watch asciinema demo sources plus a comparison visual.
 - Added a larger SVG screenshot gallery covering explain, list, watch, suggest, dry-run apply, Japanese output, JSON, and common failure states.
 - Added architecture, security, RBAC, and richer issue/PR documentation.
@@ -25,12 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Upgraded Kubernetes client libraries to `k8s.io/*` v0.35.0.
 - Expanded README badges, demo links, installation examples, and development documentation.
+- Clarified Krew command naming, dry-run modes, and explicit HPA analysis limitations in README and Krew caveats.
 - Made `--apply` dry-run by default, with patch diff output and explicit `--dry-run=false` required for persistence.
 - Added commit and build date to release version metadata.
 - Added safety preconditions and warnings to structured suggestions, and made copy-paste patch commands dry-run by default.
 - Expanded E2E command coverage for Japanese output and cluster-wide `scan`.
 - Upload coverage to Codecov from CI while keeping coverage upload non-blocking.
 - Expanded Japanese README coverage to match the English usage, safety, CI/CD, validation, and known-gap sections.
+- Hardened HPA analysis nil handling and moved health score penalties into named constants.
 
 ## [0.2.0] - 2026-05-30
 

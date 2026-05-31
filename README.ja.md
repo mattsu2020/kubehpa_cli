@@ -5,6 +5,7 @@
 [![Release](https://github.com/mattsu2020/kubectl-hpa-status/actions/workflows/release.yml/badge.svg)](https://github.com/mattsu2020/kubectl-hpa-status/actions/workflows/release.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/mattsu2020/kubectl-hpa-status.svg)](https://pkg.go.dev/github.com/mattsu2020/kubectl-hpa-status)
 [![Go Report Card](https://goreportcard.com/badge/github.com/mattsu2020/kubectl-hpa-status)](https://goreportcard.com/report/github.com/mattsu2020/kubectl-hpa-status)
+[![Stars](https://img.shields.io/github/stars/mattsu2020/kubectl-hpa-status?style=social)](https://github.com/mattsu2020/kubectl-hpa-status/stargazers)
 [![Release](https://img.shields.io/github/v/release/mattsu2020/kubectl-hpa-status)](https://github.com/mattsu2020/kubectl-hpa-status/releases)
 [![GoReleaser](https://img.shields.io/badge/release-GoReleaser-00add8)](https://goreleaser.com/)
 [![golangci-lint](https://img.shields.io/badge/lint-golangci--lint-blue)](https://golangci-lint.run/)
@@ -129,6 +130,13 @@ kubectl hpa status list -A --wide
 kubectl hpa status <hpa-name> --suggest
 ```
 
+Krewではプラグイン名は `hpa-status` として入ります。kubectlはハイフンを含む
+プラグインを `kubectl hpa_status` として検出できます。
+**このREADMEでは、kubectlのnested plugin discoveryが対応している環境向けに
+`kubectl hpa status` を推奨形として書いています。動かない場合は
+`kubectl hpa_status status <hpa-name>` または
+`kubectl-hpa-status status <hpa-name>` を使ってください。**
+
 ### Homebrew
 
 ```sh
@@ -207,6 +215,7 @@ kubectl-hpa-status completion zsh
 - `--wide`: table出力でtarget、min、maxを表示
 - `--sort-by namespace|name|current|desired|health|health-score|issue`: `list` のソート
 - `--filter all|ok|error|limited|scaling-limited|issue`: `list` のフィルタ
+- `--health-score <threshold>`: 正の閾値を指定し、health scoreがその値以下のHPAだけ表示
 - `--color auto|always|never`: table出力の色
 - `--interpret`: compact statusに診断解釈を含める
 - `--explain`: 詳細な解釈と推奨アクションを含める
@@ -307,6 +316,19 @@ metrics-serverはupstream release manifestにkind向けの
 3. 永続的に変更するには `--dry-run=false` が明示的に必要です。
 4. maxReplicas引き上げ提案には、容量・quota・コスト・下流依存の確認を促す警告を出します。
 5. プレビューでは「メトリクスが高いままなら即時ScaleUpが起き得る」など、期待される効果も示します。
+
+dry-runモードの違い:
+
+- `--dry-run=server`: Kubernetes API serverにpatchを送り、admissionやdefaulting込みで検証します。ただし永続化しません。
+- `--dry-run=client`: kubectlローカル側だけで検証するため、server-side admissionの挙動を見逃す可能性があります。
+- `kubectl-hpa-status --apply` はデフォルトでserver-side dry-runです。永続変更には `--dry-run=false` が必要です。
+
+## Limitations
+
+- Kubernetes HPA APIは、controller内部の正確なscaling decision traceを公開していません。
+- 複数メトリクス時の「勝者」判定は、見えている `currentMetrics` と `spec.metrics` からのbest-effort推定です。
+- tolerance、missing metricsの保守的処理、not-ready pods、stabilizationの内部recommendation historyはHPA statusだけでは完全には見えません。
+- Eventsは直近の文脈として有用ですが、永続的な構造化decision logとしては扱いません。
 
 ## CI/CD
 

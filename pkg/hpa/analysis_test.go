@@ -29,6 +29,19 @@ func TestAnalyzeDoesNotTreatInactiveDesiredZeroAsScaleDown(t *testing.T) {
 	}
 }
 
+func TestAnalyzeNilHPADoesNotPanic(t *testing.T) {
+	got := Analyze(nil, true)
+	if got.Health != "ERROR" {
+		t.Fatalf("expected ERROR health, got %s", got.Health)
+	}
+	if got.HealthScore != 0 {
+		t.Fatalf("expected zero health score, got %d", got.HealthScore)
+	}
+	if !containsLine(got.Interpretation, "HPA input was nil") {
+		t.Fatalf("expected nil input interpretation, got %#v", got.Interpretation)
+	}
+}
+
 func TestAnalyzeDetectsToleranceLikeNoScale(t *testing.T) {
 	hpa := baseHPA()
 	hpa.Status.CurrentReplicas = 7
