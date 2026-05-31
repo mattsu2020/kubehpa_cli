@@ -71,6 +71,9 @@ func applyConfig(cmd *cobra.Command, opts *options, cfg configFile) {
 	if cfg.Wide != nil && !persistentFlagChanged(cmd, "wide") {
 		opts.wide = *cfg.Wide
 	}
+	if cfg.Selector != "" && !persistentFlagChanged(cmd, "selector") {
+		opts.selector = cfg.Selector
+	}
 	if cfg.Color != "" && !persistentFlagChanged(cmd, "color") {
 		opts.color = cfg.Color
 	}

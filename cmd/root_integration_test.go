@@ -231,6 +231,51 @@ func TestRunStatus_JSONOutput(t *testing.T) {
 	}
 }
 
+func TestRunStatusMany_TextOutput(t *testing.T) {
+	webHPA := kube.BuildHPA("default", "web", kube.WithReplicas(3, 5))
+	apiHPA := kube.BuildHPA("default", "api", kube.WithReplicas(2, 2))
+	fakeClient := kube.NewFakeClient(webHPA, apiHPA)
+
+	var buf bytes.Buffer
+	opts := &options{
+		clientOverride: fakeClient,
+		events:         eventOption{enabled: false},
+	}
+	err := runStatusMany(context.Background(), &buf, opts, []string{"web", "api"}, false)
+	if err != nil {
+		t.Fatalf("runStatusMany returned error: %v", err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "HPA default/web") || !strings.Contains(output, "HPA default/api") {
+		t.Fatalf("expected both HPAs in output, got:\n%s", output)
+	}
+}
+
+func TestRunStatusMany_JSONOutput(t *testing.T) {
+	webHPA := kube.BuildHPA("default", "web", kube.WithReplicas(3, 5))
+	apiHPA := kube.BuildHPA("default", "api", kube.WithReplicas(2, 2))
+	fakeClient := kube.NewFakeClient(webHPA, apiHPA)
+
+	var buf bytes.Buffer
+	opts := &options{
+		output:         "json",
+		clientOverride: fakeClient,
+		events:         eventOption{enabled: false},
+	}
+	err := runStatusMany(context.Background(), &buf, opts, []string{"web", "api"}, false)
+	if err != nil {
+		t.Fatalf("runStatusMany returned error: %v", err)
+	}
+
+	var reports []hpaanalysis.StatusReport
+	if err := json.Unmarshal(buf.Bytes(), &reports); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput:\n%s", err, buf.String())
+	}
+	if len(reports) != 2 || reports[0].Analysis.Name != "web" || reports[1].Analysis.Name != "api" {
+		t.Fatalf("unexpected reports: %#v", reports)
+	}
+}
+
 func TestRunStatus_YAMLOutput(t *testing.T) {
 	hpa := kube.BuildHPA("default", "web",
 		kube.WithReplicas(3, 3),
@@ -439,6 +484,32 @@ func TestRunList_Wide(t *testing.T) {
 		if !strings.Contains(output, col) {
 			t.Errorf("expected %s column in wide output, got:\n%s", col, output)
 		}
+	}
+}
+
+func TestRunList_LabelSelector(t *testing.T) {
+	webHPA := kube.BuildHPA("default", "web", kube.WithReplicas(3, 5))
+	webHPA.Labels = map[string]string{"app": "web", "tier": "frontend"}
+	apiHPA := kube.BuildHPA("default", "api", kube.WithReplicas(2, 2))
+	apiHPA.Labels = map[string]string{"app": "api", "tier": "backend"}
+	fakeClient := kube.NewFakeClient(webHPA, apiHPA)
+
+	var buf bytes.Buffer
+	opts := &options{
+		selector:       "app=web",
+		clientOverride: fakeClient,
+		events:         eventOption{enabled: false},
+	}
+	err := runList(context.Background(), &buf, opts)
+	if err != nil {
+		t.Fatalf("runList returned error: %v", err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "web") {
+		t.Fatalf("expected selected HPA in output, got:\n%s", output)
+	}
+	if strings.Contains(output, "api") {
+		t.Fatalf("expected api to be filtered out by selector, got:\n%s", output)
 	}
 }
 

@@ -17,37 +17,105 @@ import (
 
 func newStatusCommand(opts *options) *cobra.Command {
 	return &cobra.Command{
-		Use:               "status NAME",
-		Short:             "Show concise status for one HPA",
-		Args:              cobra.ExactArgs(1),
+		Use:               "status NAME [NAME...]",
+		Short:             "Show concise status for one or more HPAs",
+		Args:              cobra.MinimumNArgs(1),
 		ValidArgsFunction: hpaNameCompletion(opts),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			includeInterpretation := (opts.interpret || opts.explain || opts.suggest) && !opts.noInterpret
 			if opts.watch {
+				if len(args) != 1 {
+					return fmt.Errorf("--watch supports exactly one HPA name")
+				}
 				return runWatch(cmd.Context(), cmd.OutOrStdout(), opts, args[0], includeInterpretation)
 			}
-			return runStatus(cmd.Context(), cmd.OutOrStdout(), opts, args[0], includeInterpretation)
+			return runStatusMany(cmd.Context(), cmd.OutOrStdout(), opts, args, includeInterpretation)
 		},
 	}
 }
 
 func newAnalyzeCommand(opts *options) *cobra.Command {
 	return &cobra.Command{
-		Use:               "analyze NAME",
+		Use:               "analyze NAME [NAME...]",
 		Aliases:           []string{"diagnose"},
-		Short:             "Analyze one HPA using visible Kubernetes API signals",
-		Args:              cobra.ExactArgs(1),
+		Short:             "Analyze one or more HPAs using visible Kubernetes API signals",
+		Args:              cobra.MinimumNArgs(1),
 		ValidArgsFunction: hpaNameCompletion(opts),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.watch {
+				if len(args) != 1 {
+					return fmt.Errorf("--watch supports exactly one HPA name")
+				}
 				return runWatch(cmd.Context(), cmd.OutOrStdout(), opts, args[0], !opts.noInterpret)
 			}
-			return runStatus(cmd.Context(), cmd.OutOrStdout(), opts, args[0], !opts.noInterpret)
+			return runStatusMany(cmd.Context(), cmd.OutOrStdout(), opts, args, !opts.noInterpret)
 		},
 	}
 }
 
 func runStatus(ctx context.Context, out io.Writer, opts *options, name string, includeInterpretation bool) error {
+	return runStatusMany(ctx, out, opts, []string{name}, includeInterpretation)
+}
+
+func runStatusMany(ctx context.Context, out io.Writer, opts *options, names []string, includeInterpretation bool) error {
+	if len(names) == 1 {
+		report, err := buildStatusReport(ctx, opts, names[0], includeInterpretation)
+		if err != nil {
+			return err
+		}
+		if opts.apply {
+			applied, err := applySuggestions(ctx, out, opts, names[0], report.Analysis.Suggestions)
+			if err != nil {
+				return err
+			}
+			report.Analysis.Actions = append(report.Analysis.Actions, applied...)
+		}
+
+		return writeOutput(out, opts.output, opts.template, report, func() error {
+			return hpaanalysis.WriteStatusTextWithOptions(out, report, hpaanalysis.StatusTextOptions{
+				Theme: style.NewTheme(shouldColorize(opts.color, out)),
+				Lang:  outputLang(opts),
+				Fix:   opts.fix,
+			})
+		})
+	}
+
+	reports := make([]hpaanalysis.StatusReport, 0, len(names))
+	for _, name := range names {
+		report, err := buildStatusReport(ctx, opts, name, includeInterpretation)
+		if err != nil {
+			return err
+		}
+		if opts.apply {
+			applied, err := applySuggestions(ctx, out, opts, name, report.Analysis.Suggestions)
+			if err != nil {
+				return err
+			}
+			report.Analysis.Actions = append(report.Analysis.Actions, applied...)
+		}
+		reports = append(reports, report)
+	}
+
+	return writeOutput(out, opts.output, opts.template, reports, func() error {
+		for i, report := range reports {
+			if i > 0 {
+				if _, err := fmt.Fprintln(out); err != nil {
+					return err
+				}
+			}
+			if err := hpaanalysis.WriteStatusTextWithOptions(out, report, hpaanalysis.StatusTextOptions{
+				Theme: style.NewTheme(shouldColorize(opts.color, out)),
+				Lang:  outputLang(opts),
+				Fix:   opts.fix,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func runSingleStatus(ctx context.Context, out io.Writer, opts *options, name string, includeInterpretation bool) error {
 	report, err := buildStatusReport(ctx, opts, name, includeInterpretation)
 	if err != nil {
 		return err
@@ -102,7 +170,61 @@ func buildStatusReport(ctx context.Context, opts *options, name string, includeI
 		report.Analysis.KEDAInfo = enrichKEDA(ctx, opts, hpa)
 	}
 
+	report.Analysis.TargetReplicas = fetchTargetReplicaInfo(ctx, client, hpa)
+	if report.Analysis.TargetReplicas != nil && report.Analysis.TargetReplicas.NotReady > 0 {
+		tr := report.Analysis.TargetReplicas
+		report.Analysis.Interpretation = append(report.Analysis.Interpretation,
+			fmt.Sprintf("[confidence: high] %d of %d pods on the scale target are not ready — HPA excludes not-ready pods from utilization calculations, so scaling decisions may not reflect actual workload pressure.", tr.NotReady, tr.TotalReplicas),
+		)
+		report.Analysis.Actions = append(report.Analysis.Actions,
+			fmt.Sprintf("Investigate why %d pod(s) are not ready on the scale target; not-ready pods can cause misleading metric utilization ratios.", tr.NotReady),
+		)
+	}
+
 	return report, nil
+}
+
+func fetchTargetReplicaInfo(ctx context.Context, client *kube.Client, hpa *autoscalingv2.HorizontalPodAutoscaler) *hpaanalysis.TargetReplicaInfo {
+	ref := hpa.Spec.ScaleTargetRef
+	if ref.Kind != "Deployment" && ref.Kind != "StatefulSet" && ref.Kind != "ReplicaSet" {
+		return nil
+	}
+
+	switch ref.Kind {
+	case "Deployment":
+		deploy, err := client.Interface.AppsV1().Deployments(hpa.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil
+		}
+		total := deploy.Status.Replicas
+		ready := deploy.Status.ReadyReplicas
+		notReady := total - ready
+		if notReady <= 0 {
+			return nil
+		}
+		return &hpaanalysis.TargetReplicaInfo{
+			TotalReplicas: total,
+			ReadyReplicas: ready,
+			NotReady:      notReady,
+		}
+	case "StatefulSet":
+		sts, err := client.Interface.AppsV1().StatefulSets(hpa.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil
+		}
+		total := sts.Status.Replicas
+		ready := sts.Status.ReadyReplicas
+		notReady := total - ready
+		if notReady <= 0 {
+			return nil
+		}
+		return &hpaanalysis.TargetReplicaInfo{
+			TotalReplicas: total,
+			ReadyReplicas: ready,
+			NotReady:      notReady,
+		}
+	}
+	return nil
 }
 
 func enrichKEDA(ctx context.Context, opts *options, hpa *autoscalingv2.HorizontalPodAutoscaler) *hpaanalysis.KEDAAnalysis {

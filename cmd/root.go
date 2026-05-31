@@ -28,6 +28,7 @@ type options struct {
 	output         string
 	template       string
 	wide           bool
+	selector       string
 	sortBy         string
 	filter         string
 	healthScoreMin int
@@ -116,9 +117,12 @@ func NewRootCommand() *cobra.Command {
 			}
 			includeInterpretation := (opts.interpret || opts.explain || opts.suggest) && !opts.noInterpret
 			if opts.watch {
+				if len(args) != 1 {
+					return fmt.Errorf("--watch supports exactly one HPA name")
+				}
 				return runWatch(cmd.Context(), cmd.OutOrStdout(), opts, args[0], includeInterpretation)
 			}
-			return runStatus(cmd.Context(), cmd.OutOrStdout(), opts, args[0], includeInterpretation)
+			return runStatusMany(cmd.Context(), cmd.OutOrStdout(), opts, args, includeInterpretation)
 		},
 	}
 
@@ -130,6 +134,7 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().StringVarP(&opts.output, "output", "o", "", "output format: table, wide, json, yaml, jsonpath=..., template=...")
 	root.PersistentFlags().StringVar(&opts.template, "template", "", "template string to use when -o jsonpath or -o go-template/template is specified")
 	root.PersistentFlags().BoolVar(&opts.wide, "wide", false, "show additional columns in table output")
+	root.PersistentFlags().StringVarP(&opts.selector, "selector", "l", "", "label selector for list and scan, for example app=web,tier!=canary")
 	root.PersistentFlags().StringVar(&opts.color, "color", opts.color, "colorize table output: auto, always, never")
 	root.PersistentFlags().BoolVar(&opts.interpret, "interpret", false, "include interpretation in status output")
 	root.PersistentFlags().BoolVar(&opts.explain, "explain", false, "include detailed interpretation and recommended actions")
@@ -175,6 +180,7 @@ type configFile struct {
 	AllNamespaces *bool                     `json:"allNamespaces" yaml:"allNamespaces"`
 	Output        string                    `json:"output" yaml:"output"`
 	Wide          *bool                     `json:"wide" yaml:"wide"`
+	Selector      string                    `json:"selector" yaml:"selector"`
 	SortBy        string                    `json:"sortBy" yaml:"sortBy"`
 	Filter        string                    `json:"filter" yaml:"filter"`
 	MinScore      *int                      `json:"minScore" yaml:"minScore"`

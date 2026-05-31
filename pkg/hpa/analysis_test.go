@@ -53,8 +53,8 @@ func TestAnalyzeDetectsToleranceLikeNoScale(t *testing.T) {
 	if got.ImpactMetric == nil || got.ImpactMetric.Name != "memory" {
 		t.Fatalf("expected memory impact estimate, got %#v", got.ImpactMetric)
 	}
-	if !containsLine(got.Interpretation, "consistent with tolerance-based no-scale") {
-		t.Fatalf("expected tolerance interpretation, got %#v", got.Interpretation)
+	if !containsLine(got.Interpretation, "tolerance-likely") {
+		t.Fatalf("expected tolerance-likely interpretation, got %#v", got.Interpretation)
 	}
 }
 
@@ -565,8 +565,8 @@ func TestAnalyzeToleranceBoundaries(t *testing.T) {
 	hpa.Status.CurrentMetrics = []autoscalingv2.MetricStatus{resourceMetricStatus(corev1.ResourceCPU, 73)}
 
 	got := Analyze(hpa, true)
-	if !containsLine(got.Interpretation, "consistent with tolerance-based no-scale") {
-		t.Fatalf("expected tolerance mention within 10%% margin, got %#v", got.Interpretation)
+	if !containsLine(got.Interpretation, "tolerance-likely") {
+		t.Fatalf("expected tolerance-likely mention within 10%% margin, got %#v", got.Interpretation)
 	}
 
 	// Case 2: Outside tolerance (e.g. 90% vs 70% target -> ratio ~1.286)

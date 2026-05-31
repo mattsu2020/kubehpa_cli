@@ -55,6 +55,7 @@ type Analysis struct {
 	Suggestions       []Suggestion       `json:"suggestions,omitempty" yaml:"suggestions,omitempty"`
 	Interpretation    []string           `json:"interpretation,omitempty" yaml:"interpretation,omitempty"`
 	KEDAInfo          *KEDAAnalysis      `json:"keda,omitempty" yaml:"keda,omitempty"`
+	TargetReplicas    *TargetReplicaInfo `json:"targetReplicas,omitempty" yaml:"targetReplicas,omitempty"`
 	Debug             []string           `json:"debug,omitempty" yaml:"debug,omitempty"`
 	ImpactMetric      *MetricImpactGuess `json:"impactMetric,omitempty" yaml:"impactMetric,omitempty"`
 	CreationTimestamp metav1.Time        `json:"creationTimestamp,omitempty" yaml:"creationTimestamp,omitempty"`
@@ -120,6 +121,14 @@ type KEDATriggerSummary struct {
 	Name string `json:"name,omitempty" yaml:"name,omitempty"`
 }
 
+// TargetReplicaInfo holds replica status from the scale target resource.
+// When not-ready pods exist, HPA scaling calculations may be affected.
+type TargetReplicaInfo struct {
+	TotalReplicas int32 `json:"totalReplicas" yaml:"totalReplicas"`
+	ReadyReplicas int32 `json:"readyReplicas" yaml:"readyReplicas"`
+	NotReady      int32 `json:"notReady" yaml:"notReady"`
+}
+
 func Analyze(src *autoscalingv2.HorizontalPodAutoscaler, includeInterpretation bool) Analysis {
 	return AnalyzeWithOptions(src, includeInterpretation, AnalysisOptions{})
 }
@@ -167,6 +176,11 @@ func AnalyzeWithOptions(src *autoscalingv2.HorizontalPodAutoscaler, includeInter
 	}
 
 	analysis.Behavior = FormatBehavior(src)
+
+	// Prefix summary with [STALE STATUS] when the controller has not yet observed the latest spec.
+	if src.Status.ObservedGeneration != nil && *src.Status.ObservedGeneration < src.Generation {
+		analysis.Summary = "[STALE STATUS] " + analysis.Summary
+	}
 
 	if guess, ok := MostInfluentialMetric(src); ok {
 		analysis.ImpactMetric = &guess
@@ -325,8 +339,16 @@ func Interpret(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas int32) []
 		lines = append(lines, "[confidence: high] desiredReplicas equals currentReplicas, so no immediate replica change is visible from status.")
 		if hpa.Status.DesiredReplicas != hpa.Spec.MaxReplicas && hpa.Status.DesiredReplicas != minReplicas {
 			if metric, ok := MetricOutsideTarget(hpa); ok {
-				lines = append(lines, fmt.Sprintf("[confidence: medium] %s metric ratio is approximately %.3f, which is close to the target.", metric.Name, metric.Ratio))
-				lines = append(lines, "[confidence: medium] This is consistent with tolerance-based no-scale. Kubernetes commonly uses a tolerance band around the target, but HPA status does not expose tolerance as an explicit reason.")
+				deviation := metric.Ratio - 1.0
+				if deviation < 0 {
+					deviation = -deviation
+				}
+				if deviation < 0.1 {
+					lines = append(lines, fmt.Sprintf("[tolerance-likely] %s metric ratio is %.3f (within ±10%% of target); the HPA default tolerance band of 0.1 likely explains why replicas are unchanged despite %s being %.1f%% %s target.", metric.Name, metric.Ratio, metric.Name, (metric.Ratio-1)*100, metric.Note))
+				} else {
+					lines = append(lines, fmt.Sprintf("[confidence: medium] %s metric ratio is approximately %.3f, which is close to the target.", metric.Name, metric.Ratio))
+					lines = append(lines, "[confidence: medium] This is consistent with tolerance-based no-scale. Kubernetes commonly uses a tolerance band around the target, but HPA status does not expose tolerance as an explicit reason.")
+				}
 				lines = append(lines, "[confidence: high] The plugin avoids claiming the exact internal reason because rounding, stabilization, or conservative metric handling may also affect the final result.")
 			}
 		}

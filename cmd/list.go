@@ -67,7 +67,7 @@ func runList(ctx context.Context, out io.Writer, opts *options) error {
 
 	hpas, err := client.Interface.AutoscalingV2().
 		HorizontalPodAutoscalers(namespace).
-		List(ctx, metav1.ListOptions{})
+		List(ctx, metav1.ListOptions{LabelSelector: opts.selector})
 	if err != nil {
 		return fmt.Errorf("failed to list HPAs: %w", err)
 	}
