@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -99,6 +101,20 @@ func TestMatchesHealthScoreThreshold(t *testing.T) {
 	}
 }
 
+func TestMatchesHealthScoreRange(t *testing.T) {
+	item := hpaanalysis.ListItem{HealthScore: 75}
+
+	if !matchesHealthScoreRange(item, 60, 90) {
+		t.Fatal("expected score 75 to match 60..90")
+	}
+	if matchesHealthScoreRange(item, 80, -1) {
+		t.Fatal("did not expect score 75 to match min score 80")
+	}
+	if matchesHealthScoreRange(item, -1, 60) {
+		t.Fatal("did not expect score 75 to match max score 60")
+	}
+}
+
 func TestSortListItemsByDesired(t *testing.T) {
 	items := []hpaanalysis.ListItem{
 		{Name: "api", Desired: 5},
@@ -192,5 +208,51 @@ func TestVersionCommandPrintsBuildMetadata(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in version output, got %q", want, text)
 		}
+	}
+}
+
+func TestCompletionCommandSupportsPowerShell(t *testing.T) {
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"completion", "powershell"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Register-ArgumentCompleter") {
+		t.Fatalf("expected powershell completion script, got %q", out.String())
+	}
+}
+
+func TestApplyConfigDefaultsDoesNotOverrideExplicitFlags(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hpa-status.yaml")
+	if err := os.WriteFile(path, []byte("namespace: team-a\nlang: ja\nevents: 3\nminScore: 60\ncolor: always\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCommand()
+	root.SetArgs([]string{"--config", path, "--lang", "en", "version"})
+	if err := root.ParseFlags([]string{"--config", path, "--lang", "en"}); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := &options{config: path, lang: "en", events: eventOption{enabled: true, limit: 5}, healthScoreMin: -1, healthScoreMax: -1}
+	if err := applyConfigDefaults(root, opts); err != nil {
+		t.Fatal(err)
+	}
+	if opts.namespace != "team-a" {
+		t.Fatalf("expected namespace from config, got %q", opts.namespace)
+	}
+	if opts.lang != "en" {
+		t.Fatalf("expected explicit lang to win, got %q", opts.lang)
+	}
+	if opts.events.limit != 3 {
+		t.Fatalf("expected events from config, got %d", opts.events.limit)
+	}
+	if opts.healthScoreMin != 60 {
+		t.Fatalf("expected min score from config, got %d", opts.healthScoreMin)
 	}
 }

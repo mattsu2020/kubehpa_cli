@@ -31,6 +31,54 @@ func WriteStatusText(w io.Writer, report StatusReport, theme style.Theme) error 
 	return WriteStatusTextWithOptions(w, report, StatusTextOptions{Theme: theme})
 }
 
+func WriteStatusDashboard(w io.Writer, report StatusReport, theme style.Theme) error {
+	a := report.Analysis
+	diff := a.Desired - a.Current
+	var out []byte
+	out = fmt.Appendf(out, "kubectl-hpa-status dashboard\n")
+	out = fmt.Appendf(out, "HPA      %s/%s\n", a.Namespace, a.Name)
+	out = fmt.Appendf(out, "Target   %s\n", a.Target)
+	out = fmt.Appendf(out, "Health   %s %d/100\n", theme.HealthLabel(a.Health), a.HealthScore)
+	out = fmt.Appendf(out, "Replicas current=%d desired=%d diff=%+d min=%d max=%d\n", a.Current, a.Desired, diff, a.Min, a.Max)
+	out = fmt.Appendf(out, "Summary  %s\n", theme.SummaryColor(a.Summary))
+
+	out = append(out, "\nConditions\n"...)
+	if len(a.Conditions) == 0 {
+		out = append(out, "  No conditions reported.\n"...)
+	} else {
+		for _, condition := range a.Conditions {
+			out = fmt.Appendf(out, "  %-15s %s %-24s %s\n", condition.Type, theme.ConditionStatus(condition.Type, condition.Status), condition.Reason, condition.Message)
+		}
+	}
+
+	out = append(out, "\nMetrics\n"...)
+	if len(a.Metrics) == 0 {
+		out = append(out, "  No current metrics reported.\n"...)
+	} else {
+		for _, metric := range a.Metrics {
+			name := metric.Name
+			if name == "" {
+				name = metric.Type
+			}
+			bar := "──────────"
+			if metric.Ratio != nil {
+				bar = progressBar(*metric.Ratio)
+			}
+			out = fmt.Appendf(out, "  %-24s %s current=%s target=%s %s\n", name, bar, metric.Current, metric.Target, theme.MetricNote(metric.Note))
+		}
+	}
+
+	if len(a.Actions) > 0 {
+		out = append(out, "\nNext actions\n"...)
+		for _, action := range a.Actions {
+			out = fmt.Appendf(out, "  - %s\n", theme.ActionLine(action))
+		}
+	}
+
+	_, err := w.Write(out)
+	return err
+}
+
 func WriteStatusTextWithOptions(w io.Writer, report StatusReport, opts StatusTextOptions) error {
 	a := report.Analysis
 	theme := opts.Theme

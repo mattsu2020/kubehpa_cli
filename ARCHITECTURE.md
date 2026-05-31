@@ -14,6 +14,7 @@ stable Kubernetes API surfaces:
 - current metric status
 - `spec.behavior`
 - recent Events
+- HPA labels and annotations used to detect generated or KEDA-managed HPAs
 
 When Kubernetes does not expose an internal decision, the output must say so.
 Inference should be labeled with confidence language and covered by tests.
@@ -41,6 +42,31 @@ without depending on Cobra command wiring.
 3. Conditions, metrics, behavior, health, interpretation, and suggestions are
    attached to the same model.
 4. Output writers render text, JSON, YAML, JSONPath, or templates.
+
+## CLI Defaults And Config
+
+Runtime defaults can come from flags or an optional config file. The default
+config path is `~/.kube/hpa-status.yaml`; `--config` selects another file.
+Config values are applied only when the corresponding CLI flag was not set.
+This keeps command-line invocations deterministic while allowing teams to set
+defaults for namespace, language, color, event limits, score filters, and
+health-score weights.
+
+## Watch Dashboard
+
+`--watch` remains a simple polling loop over Kubernetes API reads. The
+`--dashboard` renderer is intentionally output-only: it does not introduce an
+event loop framework or terminal input state. If a future Bubble Tea-style TUI
+is added, it should reuse the same `Analysis` model and keep JSON/YAML output
+unchanged.
+
+## KEDA And Adapter Context
+
+KEDA and custom/external metrics adapter support is currently limited to
+signals visible on the HPA itself. The analyzer detects KEDA-style labels,
+annotations, and `keda-hpa-*` names, then points operators to ScaledObject and
+adapter diagnostics. Direct reads of KEDA CRDs should be added through a
+separate optional client path so clusters without KEDA do not pay that cost.
 
 ## Suggestion Safety
 

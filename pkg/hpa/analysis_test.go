@@ -372,6 +372,30 @@ func TestBuildSuggestionsAddsBehaviorAndToleranceRecommendations(t *testing.T) {
 	}
 }
 
+func TestAnalyzeAddsKEDADiagnosticsAndSuggestion(t *testing.T) {
+	hpa := baseHPA()
+	hpa.Name = "keda-hpa-worker"
+	hpa.Labels = map[string]string{"scaledobject.keda.sh/name": "worker"}
+	target := resource.MustParse("10")
+	hpa.Spec.Metrics = []autoscalingv2.MetricSpec{
+		{
+			Type: autoscalingv2.ExternalMetricSourceType,
+			External: &autoscalingv2.ExternalMetricSource{
+				Metric: autoscalingv2.MetricIdentifier{Name: "s0-queue"},
+				Target: autoscalingv2.MetricTarget{Type: autoscalingv2.ValueMetricType, Value: &target},
+			},
+		},
+	}
+
+	got := Analyze(hpa, true)
+	if !containsLine(got.Interpretation, "appears to be managed by KEDA") {
+		t.Fatalf("expected KEDA diagnostic, got %#v", got.Interpretation)
+	}
+	if !containsSuggestion(got.Suggestions, "Inspect KEDA ScaledObject") {
+		t.Fatalf("expected KEDA suggestion, got %#v", got.Suggestions)
+	}
+}
+
 func baseHPA() *autoscalingv2.HorizontalPodAutoscaler {
 	minReplicas := int32(2)
 	return &autoscalingv2.HorizontalPodAutoscaler{
@@ -515,6 +539,20 @@ func TestWriteStatusDiff_NilPrevious(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "HPA default/web") {
 		t.Errorf("expected HPA header in diff output, got:\n%s", buf.String())
+	}
+}
+
+func TestWriteStatusDashboardIncludesKeyPanels(t *testing.T) {
+	report := StatusReport{Analysis: Analyze(baseHPA(), true)}
+	var buf bytes.Buffer
+	if err := WriteStatusDashboard(&buf, report, style.NewTheme(false)); err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+	for _, want := range []string{"kubectl-hpa-status dashboard", "Health", "Replicas", "Conditions", "Metrics"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in dashboard output:\n%s", want, output)
+		}
 	}
 }
 

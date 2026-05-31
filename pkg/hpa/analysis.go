@@ -157,6 +157,7 @@ func AnalyzeWithOptions(src *autoscalingv2.HorizontalPodAutoscaler, includeInter
 		analysis.Actions = RecommendedActions(src, minReplicas)
 		analysis.Suggestions = BuildSuggestions(src, minReplicas)
 		analysis.Interpretation = Interpret(src, minReplicas)
+		analysis.Interpretation = append(analysis.Interpretation, KEDADiagnostics(src)...)
 	}
 	analysis.Health, analysis.HealthScore = HealthWithWeights(src, minReplicas, opts.HealthWeights)
 	if opts.Debug {
@@ -364,6 +365,38 @@ func ObjectMetricDiagnostics(hpa *autoscalingv2.HorizontalPodAutoscaler) []strin
 		}
 	}
 	return lines
+}
+
+func KEDADiagnostics(hpa *autoscalingv2.HorizontalPodAutoscaler) []string {
+	if !looksLikeKEDAManaged(hpa) {
+		return nil
+	}
+	lines := []string{
+		"[confidence: medium] This HPA appears to be managed by KEDA. HPA status explains the final autoscaling object, but KEDA ScaledObject, TriggerAuthentication, and scaler errors may explain missing external metrics.",
+	}
+	if len(hpa.Spec.Metrics) == 0 {
+		lines = append(lines, "[confidence: high] KEDA-style HPA has no visible spec.metrics; check whether KEDA has reconciled the ScaledObject successfully.")
+	}
+	for _, spec := range hpa.Spec.Metrics {
+		if spec.Type == autoscalingv2.ExternalMetricSourceType && spec.External != nil {
+			lines = append(lines, fmt.Sprintf("[confidence: medium] For KEDA external metric %q, inspect the ScaledObject status.conditions and keda-operator logs if HPA currentMetrics is missing or stale.", spec.External.Metric.Name))
+		}
+	}
+	return lines
+}
+
+func looksLikeKEDAManaged(hpa *autoscalingv2.HorizontalPodAutoscaler) bool {
+	for key, value := range hpa.Labels {
+		if strings.Contains(strings.ToLower(key), "keda.sh") || strings.Contains(strings.ToLower(value), "keda") {
+			return true
+		}
+	}
+	for key, value := range hpa.Annotations {
+		if strings.Contains(strings.ToLower(key), "keda.sh") || strings.Contains(strings.ToLower(value), "keda") {
+			return true
+		}
+	}
+	return strings.HasPrefix(hpa.Name, "keda-hpa-")
 }
 
 func FindCondition(hpa *autoscalingv2.HorizontalPodAutoscaler, conditionType string) *autoscalingv2.HorizontalPodAutoscalerCondition {

@@ -102,6 +102,7 @@ func BuildSuggestions(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas in
 	suggestions = append(suggestions, behaviorPolicySuggestions(hpa)...)
 	suggestions = append(suggestions, toleranceSuggestions(hpa)...)
 	suggestions = append(suggestions, metricMixSuggestions(hpa)...)
+	suggestions = append(suggestions, kedaSuggestions(hpa)...)
 
 	if len(suggestions) == 0 {
 		suggestions = append(suggestions, Suggestion{
@@ -111,6 +112,22 @@ func BuildSuggestions(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas in
 		})
 	}
 	return suggestions
+}
+
+func kedaSuggestions(hpa *autoscalingv2.HorizontalPodAutoscaler) []Suggestion {
+	if !looksLikeKEDAManaged(hpa) {
+		return nil
+	}
+	return []Suggestion{{
+		Title:       "Inspect KEDA ScaledObject",
+		Description: "This HPA appears to be KEDA-managed. Check the owning ScaledObject status, scaler authentication, and keda-operator logs before patching generated HPA behavior directly.",
+		Risk:        "low",
+		Preconditions: []string{
+			"The HPA has KEDA labels/annotations or a keda-hpa-* name.",
+			"External metrics are missing, stale, or inconsistent with expected scaler output.",
+		},
+		Warnings: []string{"Direct HPA patches may be overwritten by KEDA reconciliation."},
+	}}
 }
 
 func behaviorPolicySuggestions(hpa *autoscalingv2.HorizontalPodAutoscaler) []Suggestion {
