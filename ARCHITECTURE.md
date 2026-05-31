@@ -58,3 +58,16 @@ Kubernetes may eventually expose structured HPA scaling decisions. If that API
 arrives, add it as another input signal rather than replacing the existing
 analysis model. The current boundary should remain: use explicit controller
 signals when available, and clearly label inference when they are not.
+
+Concrete integration plan:
+
+- Add a small adapter that converts the new structured decision fields into the
+  existing `Analysis` model instead of leaking raw API shape into renderers.
+- Prefer structured controller reasons over current best-effort inference for
+  metric winner, tolerance, missing-metric handling, and stabilization history.
+- Keep the old inference path as a fallback for older clusters and mark it with
+  lower confidence when structured decisions are absent.
+- Extend JSON/YAML output with additive fields only; do not rename existing
+  fields such as `summary`, `conditions`, `metrics`, or `suggestions`.
+- Add fixture tests that compare the same HPA with and without structured
+  decision data so behavior remains compatible across Kubernetes versions.

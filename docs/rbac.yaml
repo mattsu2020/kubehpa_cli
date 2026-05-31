@@ -2,6 +2,9 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: kubectl-hpa-status-readonly
+  annotations:
+    kubectl-hpa-status.io/profile: minimal
+    kubectl-hpa-status.io/description: "Minimum read-only permissions for status, analyze, list, scan, watch, --explain, and --suggest."
 rules:
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]
@@ -14,6 +17,9 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: kubectl-hpa-status-apply
+  annotations:
+    kubectl-hpa-status.io/profile: recommended-for-apply
+    kubectl-hpa-status.io/description: "Recommended permissions when operators use --fix --apply. Patch is only needed for applying suggested HPA spec changes."
 rules:
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]

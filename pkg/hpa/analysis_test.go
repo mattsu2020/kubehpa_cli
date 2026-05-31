@@ -285,6 +285,93 @@ func TestAnalyzeAddsConcretePatchSuggestionForMaxReplicas(t *testing.T) {
 	}
 }
 
+func TestAnalyzeWithOptionsDebugAndCustomHealthWeights(t *testing.T) {
+	hpa := baseHPA()
+	hpa.Status.Conditions = append(hpa.Status.Conditions,
+		autoscalingv2.HorizontalPodAutoscalerCondition{Type: "ScalingLimited", Status: corev1.ConditionTrue, Reason: "TooManyReplicas"},
+	)
+
+	got := AnalyzeWithOptions(hpa, true, AnalysisOptions{
+		HealthWeights: HealthWeights{ScalingLimited: 40},
+		Debug:         true,
+	})
+	if got.HealthScore != 55 {
+		t.Fatalf("expected custom score 55, got %d", got.HealthScore)
+	}
+	if !containsLine(got.Debug, "health: state=LIMITED score=55") {
+		t.Fatalf("expected debug health line, got %#v", got.Debug)
+	}
+}
+
+func TestAnalyzeExternalMetricDiagnosticsWhenStatusMissing(t *testing.T) {
+	hpa := baseHPA()
+	target := resource.MustParse("10")
+	hpa.Spec.Metrics = []autoscalingv2.MetricSpec{
+		{
+			Type: autoscalingv2.ExternalMetricSourceType,
+			External: &autoscalingv2.ExternalMetricSource{
+				Metric: autoscalingv2.MetricIdentifier{Name: "queue_depth"},
+				Target: autoscalingv2.MetricTarget{Type: autoscalingv2.ValueMetricType, Value: &target},
+			},
+		},
+	}
+
+	got := Analyze(hpa, true)
+	if !containsLine(got.Interpretation, "External metric \"queue_depth\" is configured but no matching current metric status is reported") {
+		t.Fatalf("expected external metric diagnostic, got %#v", got.Interpretation)
+	}
+	if !containsSuggestion(got.Suggestions, "Investigate stale external metric") {
+		t.Fatalf("expected stale external metric suggestion, got %#v", got.Suggestions)
+	}
+}
+
+func TestAnalyzeObjectMetricDiagnosticsShowsTargetComparison(t *testing.T) {
+	hpa := baseHPA()
+	target := resource.MustParse("100")
+	current := resource.MustParse("150")
+	hpa.Spec.Metrics = []autoscalingv2.MetricSpec{
+		{
+			Type: autoscalingv2.ObjectMetricSourceType,
+			Object: &autoscalingv2.ObjectMetricSource{
+				DescribedObject: autoscalingv2.CrossVersionObjectReference{Kind: "Service", Name: "web"},
+				Metric:          autoscalingv2.MetricIdentifier{Name: "requests"},
+				Target:          autoscalingv2.MetricTarget{Type: autoscalingv2.ValueMetricType, Value: &target},
+			},
+		},
+	}
+	hpa.Status.CurrentMetrics = []autoscalingv2.MetricStatus{
+		{
+			Type: autoscalingv2.ObjectMetricSourceType,
+			Object: &autoscalingv2.ObjectMetricStatus{
+				DescribedObject: autoscalingv2.CrossVersionObjectReference{Kind: "Service", Name: "web"},
+				Metric:          autoscalingv2.MetricIdentifier{Name: "requests"},
+				Current:         autoscalingv2.MetricValueStatus{Value: &current},
+			},
+		},
+	}
+
+	got := Analyze(hpa, true)
+	if !containsLine(got.Interpretation, "Object metric \"requests\" on Service/web is 1.500x its target") {
+		t.Fatalf("expected object metric target comparison, got %#v", got.Interpretation)
+	}
+}
+
+func TestBuildSuggestionsAddsBehaviorAndToleranceRecommendations(t *testing.T) {
+	hpa := baseHPA()
+	hpa.Status.CurrentReplicas = 5
+	hpa.Status.DesiredReplicas = 5
+	hpa.Spec.Metrics = []autoscalingv2.MetricSpec{resourceMetricSpec(corev1.ResourceCPU, 70)}
+	hpa.Status.CurrentMetrics = []autoscalingv2.MetricStatus{resourceMetricStatus(corev1.ResourceCPU, 75)}
+
+	got := Analyze(hpa, true)
+	if !containsSuggestion(got.Suggestions, "Add explicit scale-up policy") {
+		t.Fatalf("expected scale-up policy suggestion, got %#v", got.Suggestions)
+	}
+	if !containsSuggestion(got.Suggestions, "Review scale-up tolerance") {
+		t.Fatalf("expected tolerance suggestion, got %#v", got.Suggestions)
+	}
+}
+
 func baseHPA() *autoscalingv2.HorizontalPodAutoscaler {
 	minReplicas := int32(2)
 	return &autoscalingv2.HorizontalPodAutoscaler{
@@ -302,6 +389,15 @@ func baseHPA() *autoscalingv2.HorizontalPodAutoscaler {
 			},
 		},
 	}
+}
+
+func containsSuggestion(suggestions []Suggestion, title string) bool {
+	for _, suggestion := range suggestions {
+		if suggestion.Title == title {
+			return true
+		}
+	}
+	return false
 }
 
 func resourceMetricSpec(name corev1.ResourceName, target int32) autoscalingv2.MetricSpec {

@@ -76,6 +76,7 @@ kubectl hpa status <hpa-name> --suggest
 kubectl hpa status <hpa-name> --fix --apply
 kubectl hpa status <hpa-name> --fix --apply --dry-run=false
 kubectl hpa status <hpa-name> --lang=ja
+kubectl hpa status <hpa-name> --debug
 kubectl hpa status scan
 kubectl hpa status list -A --problem
 kubectl hpa status list -A --wide --sort-by=desired --filter=scaling-limited
@@ -212,8 +213,8 @@ kubectl-hpa-status completion zsh
 - `-A, --all-namespaces`: 全namespaceのHPAを一覧
 - `--context`, `--kubeconfig`, `--cluster`: kubeconfig選択
 - `-o table|wide|json|yaml|jsonpath=...|template=...`: 出力形式
-- `--wide`: table出力でtarget、min、maxを表示
-- `--sort-by namespace|name|current|desired|health|health-score|issue`: `list` のソート
+- `--wide`: table出力でtarget、min、max、desired-current差分を表示
+- `--sort-by namespace|name|current|desired|diff|health|health-score|issue`: `list` のソート
 - `--filter all|ok|error|limited|scaling-limited|issue`: `list` のフィルタ
 - `--health-score <threshold>`: 正の閾値を指定し、health scoreがその値以下のHPAだけ表示
 - `--color auto|always|never`: table出力の色
@@ -223,6 +224,8 @@ kubectl-hpa-status completion zsh
 - `--fix`: より強い修正計画と適用可能なpatchを表示
 - `--apply`: デフォルトではserver-side dry-runでHPA patchを検証
 - `--dry-run=false`: `--apply` と併用したときのみ永続変更。`-y` なしでは確認プロンプトあり
+- `--debug` / `-v`: 内部で計算したmetric ratio、health score、condition根拠を表示
+- `--config <file>`: health scoreの重みなど解析設定を読み込み
 - `--problem`: `list` で問題が見えるHPAだけ表示
 - `--lang=ja` または `-o ja`: 日本語ラベルで表示
 - `--no-interpret`: 解釈を省き、ステータス由来のデータのみ表示
@@ -283,6 +286,9 @@ kind delete cluster --name hpa-status-dev
 | メトリクスが取れずスケールしない | `kubectl hpa status <name> --explain` | `ScalingActive=False`, Events | metrics-server または custom/external metrics adapter を確認 |
 | レプリカ数が上限に張り付く | `kubectl hpa status <name> --suggest` | `ScalingLimited=True`, `desiredReplicas == maxReplicas` | 容量を確認し、提案されたmaxReplicasパッチをdry-run検証 |
 | スケールダウンが遅い | `kubectl hpa status <name> --explain` | `ScaleDownStabilized`, `spec.behavior.scaleDown` | stabilization windowを待つか調整 |
+| KEDA/External Metricsが止まる | `kubectl hpa status <name> --explain --suggest` | `External` metricが`currentMetrics`に出ない、`FailedGetExternalMetric` | external metrics API、KEDA ScaledObject、adapterログ、metric selectorを確認 |
+| Object metricの意味が分かりにくい | `kubectl hpa status <name> --explain` | `Object <kind>/<name>`, ratio | 対象Objectの値とPod単位の負荷を分けて確認 |
+| tolerance付近で増減しない | `kubectl hpa status <name> --explain --debug` | ratioが1.02〜1.10付近、desired=current | sustainedな圧力か確認し、必要ならHPAConfigurableTolerance利用を検討 |
 | クラスタ全体を棚卸ししたい | `kubectl hpa status scan` | health score, issue, conditions | `ERROR` から優先して確認 |
 
 ## 互換性マトリクス
@@ -311,11 +317,27 @@ metrics-serverはupstream release manifestにkind向けの
 
 `--suggest` / `--fix --apply` は安全側に倒しています。
 
+```text
+観測する
+  kubectl hpa status <name> --explain --events=5
+      |
+提案だけ確認する
+  kubectl hpa status <name> --suggest
+      |
+server-side dry-runで検証する
+  kubectl hpa status <name> --fix --apply
+      |
+差分、desiredReplicas、警告を確認する
+      |
+永続反映する
+  kubectl hpa status <name> --fix --apply --dry-run=false
+```
+
 1. `--suggest` は `--dry-run=server` 付きの `kubectl patch` を表示します。
-2. `--fix --apply` もデフォルトではserver-side dry-runで、適用前に差分を表示します。
+2. `--fix --apply` もデフォルトではserver-side dry-runで、適用前に `status.desiredReplicas` と変更対象の差分を表示します。
 3. 永続的に変更するには `--dry-run=false` が明示的に必要です。
-4. maxReplicas引き上げ提案には、容量・quota・コスト・下流依存の確認を促す警告を出します。
-5. プレビューでは「メトリクスが高いままなら即時ScaleUpが起き得る」など、期待される効果も示します。
+4. maxReplicas、behavior、tolerance提案には、容量・quota・コスト・feature gate・下流依存の確認を促す警告を出します。
+5. External/Object metricsは、adapterや対象Objectの状態確認を優先し、ステータスだけで危険な自動削除patchは出しません。
 
 dry-runモードの違い:
 

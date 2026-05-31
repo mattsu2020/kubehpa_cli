@@ -124,6 +124,19 @@ func TestSortListItemsByDiff(t *testing.T) {
 	}
 }
 
+func TestSortListItemsProblemDefaultsWorstHealthFirst(t *testing.T) {
+	items := []hpaanalysis.ListItem{
+		{Namespace: "default", Name: "limited", HealthScore: 75, Current: 5, Desired: 5},
+		{Namespace: "default", Name: "broken", HealthScore: 50, Current: 2, Desired: 2},
+		{Namespace: "default", Name: "large-diff", HealthScore: 75, Current: 1, Desired: 8},
+	}
+
+	sortListItems(items, "problem")
+	if items[0].Name != "broken" || items[1].Name != "large-diff" || items[2].Name != "limited" {
+		t.Fatalf("expected [broken, large-diff, limited], got [%s, %s, %s]", items[0].Name, items[1].Name, items[2].Name)
+	}
+}
+
 func TestSortListItemsByAge(t *testing.T) {
 	now := metav1.Now()
 	past := metav1.NewTime(now.Add(-10 * time.Minute))
@@ -138,6 +151,17 @@ func TestSortListItemsByAge(t *testing.T) {
 	sortListItems(items, "age")
 	if items[0].Name != "db" || items[1].Name != "api" || items[2].Name != "web" {
 		t.Fatalf("expected order [db, api, web], got order: %s, %s, %s", items[0].Name, items[1].Name, items[2].Name)
+	}
+}
+
+func TestPatchDiffIncludesCurrentDesiredReplicas(t *testing.T) {
+	minReplicas := int32(2)
+	diff := patchDiff(&minReplicas, 7, 10, `{"spec":{"maxReplicas":20}}`)
+	if !strings.Contains(diff, "status.desiredReplicas: 7") {
+		t.Fatalf("expected desiredReplicas context, got %q", diff)
+	}
+	if !strings.Contains(diff, "spec.maxReplicas: 10 -> 20") {
+		t.Fatalf("expected maxReplicas diff, got %q", diff)
 	}
 }
 
