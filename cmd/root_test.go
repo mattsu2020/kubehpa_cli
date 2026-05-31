@@ -132,3 +132,21 @@ func TestReportHasConditionNormalizesConditionName(t *testing.T) {
 		t.Fatalf("expected scaling-limited to match ScalingLimited")
 	}
 }
+
+func TestVersionCommandPrintsBuildMetadata(t *testing.T) {
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"version"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	for _, want := range []string{"kubectl-hpa-status version", "commit=", "date="} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in version output, got %q", want, text)
+		}
+	}
+}

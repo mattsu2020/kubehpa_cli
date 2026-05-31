@@ -149,6 +149,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newListCommand(opts))
 	root.AddCommand(newScanCommand(opts))
 	root.AddCommand(newWatchCommand(opts))
+	root.AddCommand(newVersionCommand())
 	root.AddCommand(newCompletionCommand(root))
 
 	return root
@@ -232,6 +233,18 @@ func newWatchCommand(opts *options) *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+func newVersionCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print version and build metadata",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "kubectl-hpa-status version %s\n", buildVersion())
+			return err
+		},
+	}
 }
 
 func newCompletionCommand(root *cobra.Command) *cobra.Command {

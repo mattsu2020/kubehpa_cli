@@ -1,0 +1,7 @@
+{"version":2,"width":110,"height":34,"timestamp":1780070400,"env":{"SHELL":"/bin/zsh","TERM":"xterm-256color"}}
+[0.1,"o","$ kubectl hpa status api --explain\n"]
+[0.2,"o","HPA default/api\nTarget: Deployment/api\nReplicas: current=10 desired=10 min=2 max=10\nHealth score: 🔴 ScalingLimited 75/100\n\nSummary: HPA is at maxReplicas.\n"]
+[1.0,"o","\n$ kubectl hpa status api --suggest\n"]
+[1.1,"o","Recommended commands:\n  - Raise maxReplicas: The HPA is capped at maxReplicas=10. Raising it to 20 allows the controller to add capacity if metrics still require it. (risk: medium)\n    $ kubectl patch hpa api -n default --type=merge -p '{\"spec\":{\"maxReplicas\":20}}' --dry-run=server\n    precondition: ScalingActive is True.\n    warning: Confirm node capacity, PodDisruptionBudgets, quotas, and downstream dependency limits before persisting this change.\n"]
+[2.0,"o","\n$ kubectl hpa status api --fix --apply\n"]
+[2.1,"o","Proposed patch: Raise maxReplicas\n  spec.maxReplicas: 10 -> 20\nDry-run mode is enabled; Kubernetes will validate patches without persisting them. Use --dry-run=false to apply changes.\ndry-run 1 suggested patch(es) to HPA api? [y/N]: y\nDry-run validated: Raise maxReplicas\n"]
