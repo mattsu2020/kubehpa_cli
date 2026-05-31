@@ -96,17 +96,17 @@ func WriteStatusTextWithOptions(w io.Writer, report StatusReport, opts StatusTex
 		for _, suggestion := range a.Suggestions {
 			out = fmt.Appendf(out, "  - %s: %s", suggestion.Title, suggestion.Description)
 			if suggestion.Risk != "" {
-				out = fmt.Appendf(out, " (risk: %s)", suggestion.Risk)
+				out = fmt.Appendf(out, " (%s: %s)", labels.Risk, suggestion.Risk)
 			}
 			out = append(out, '\n')
 			if suggestion.Command != "" {
 				out = fmt.Appendf(out, "    $ %s\n", theme.ActionLine(suggestion.Command))
 			}
 			for _, precondition := range suggestion.Preconditions {
-				out = fmt.Appendf(out, "    precondition: %s\n", precondition)
+				out = fmt.Appendf(out, "    %s: %s\n", labels.Precondition, precondition)
 			}
 			for _, warning := range suggestion.Warnings {
-				out = fmt.Appendf(out, "    warning: %s\n", theme.ActionLine(warning))
+				out = fmt.Appendf(out, "    %s: %s\n", labels.Warning, theme.ActionLine(warning))
 			}
 		}
 	}
@@ -116,6 +116,14 @@ func WriteStatusTextWithOptions(w io.Writer, report StatusReport, opts StatusTex
 		out = fmt.Appendf(out, "%s:\n", labels.Interpretation)
 		for _, line := range a.Interpretation {
 			out = fmt.Appendf(out, "  - %s\n", theme.InterpretationLine(line))
+		}
+	}
+
+	if len(a.Debug) > 0 {
+		out = append(out, '\n')
+		out = fmt.Appendf(out, "%s:\n", labels.Debug)
+		for _, line := range a.Debug {
+			out = fmt.Appendf(out, "  - %s\n", theme.Dim.Render(line))
 		}
 	}
 
@@ -145,7 +153,11 @@ type labels struct {
 	Suggestions    string
 	Fix            string
 	Interpretation string
+	Debug          string
 	Events         string
+	Risk           string
+	Precondition   string
+	Warning        string
 }
 
 func textLabels(lang string) labels {
@@ -157,12 +169,16 @@ func textLabels(lang string) labels {
 			Summary:        "要約",
 			Conditions:     "状態",
 			Metrics:        "メトリクス",
-			Behavior:       "Behavior",
+			Behavior:       "挙動",
 			Actions:        "推奨アクション",
 			Suggestions:    "推奨コマンド",
 			Fix:            "修正プラン",
 			Interpretation: "解釈",
+			Debug:          "デバッグ",
 			Events:         "最近のイベント",
+			Risk:           "リスク",
+			Precondition:   "前提条件",
+			Warning:        "警告",
 		}
 	}
 	return labels{
@@ -177,7 +193,11 @@ func textLabels(lang string) labels {
 		Suggestions:    "Recommended commands",
 		Fix:            "Fix plan",
 		Interpretation: "Interpretation",
+		Debug:          "Debug",
 		Events:         "Recent events",
+		Risk:           "risk",
+		Precondition:   "precondition",
+		Warning:        "warning",
 	}
 }
 
@@ -433,12 +453,13 @@ func WriteListText(w io.Writer, report ListReport, opts ListTextOptions) error {
 	t := opts.theme()
 	var out []byte
 	if opts.Wide {
-		out = fmt.Appendf(out, "%s %s %s %s %s %s %s %s %s %s %s %s %s %s\n",
+		out = fmt.Appendf(out, "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n",
 			padRight("NAMESPACE", 20),
 			padRight("NAME", 32),
 			padRight("TARGET", 28),
 			padRight("CURRENT", 8),
 			padRight("DESIRED", 8),
+			padRight("DIFF", 8),
 			padRight("MIN", 8),
 			padRight("MAX", 8),
 			padRight("HEALTH", 12),
@@ -449,12 +470,13 @@ func WriteListText(w io.Writer, report ListReport, opts ListTextOptions) error {
 			padRight("CONDITIONS", 36),
 			"SUMMARY")
 		for _, item := range report.Items {
-			out = fmt.Appendf(out, "%s %s %s %s %s %s %s %s %s %s %s %s %s %s\n",
+			out = fmt.Appendf(out, "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n",
 				padRight(item.Namespace, 20),
 				padRight(item.Name, 32),
 				padRight(item.Target, 28),
 				padRight(fmt.Sprintf("%d", item.Current), 8),
 				padRight(fmt.Sprintf("%d", item.Desired), 8),
+				padRight(formatReplicaDiff(item.Desired-item.Current), 8),
 				padRight(fmt.Sprintf("%d", item.Min), 8),
 				padRight(fmt.Sprintf("%d", item.Max), 8),
 				padRight(t.HealthLabel(item.Health), 12),
@@ -491,6 +513,13 @@ func WriteListText(w io.Writer, report ListReport, opts ListTextOptions) error {
 	}
 	_, err := w.Write(out)
 	return err
+}
+
+func formatReplicaDiff(diff int32) string {
+	if diff > 0 {
+		return fmt.Sprintf("+%d", diff)
+	}
+	return fmt.Sprintf("%d", diff)
 }
 
 func compactMetrics(metrics []Metric) string {

@@ -3,9 +3,11 @@ package hpa
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 func BuildSuggestions(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas int32) []Suggestion {
@@ -16,6 +18,7 @@ func BuildSuggestions(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas in
 			Description: "ScalingActive is not True. Fix metrics-server or the custom/external metrics adapter before changing HPA limits.",
 			Risk:        "low",
 		})
+		suggestions = append(suggestions, staleMetricSuggestions(hpa)...)
 		return suggestions
 	}
 
@@ -96,6 +99,10 @@ func BuildSuggestions(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas in
 		}
 	}
 
+	suggestions = append(suggestions, behaviorPolicySuggestions(hpa)...)
+	suggestions = append(suggestions, toleranceSuggestions(hpa)...)
+	suggestions = append(suggestions, metricMixSuggestions(hpa)...)
+
 	if len(suggestions) == 0 {
 		suggestions = append(suggestions, Suggestion{
 			Title:       "No safe automatic fix",
@@ -104,6 +111,179 @@ func BuildSuggestions(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas in
 		})
 	}
 	return suggestions
+}
+
+func behaviorPolicySuggestions(hpa *autoscalingv2.HorizontalPodAutoscaler) []Suggestion {
+	var suggestions []Suggestion
+	if hasVisibleScaleUpPressure(hpa) && missingPolicies(hpa.Spec.Behavior, "scaleUp") {
+		patch := mustJSON(map[string]any{
+			"spec": map[string]any{
+				"behavior": map[string]any{
+					"scaleUp": map[string]any{
+						"stabilizationWindowSeconds": 0,
+						"selectPolicy":               "Max",
+						"policies": []map[string]any{
+							{"type": "Percent", "value": 100, "periodSeconds": 60},
+							{"type": "Pods", "value": 4, "periodSeconds": 60},
+						},
+					},
+				},
+			},
+		})
+		suggestions = append(suggestions, Suggestion{
+			Title:       "Add explicit scale-up policy",
+			Description: "Visible metrics are above target and scale-up behavior is implicit. Adding explicit scaleUp policies makes burst response predictable.",
+			Command:     kubectlPatchCommand(hpa, patch, true),
+			Patch:       patch,
+			Risk:        "medium",
+			Preconditions: []string{
+				"The workload can absorb faster replica growth.",
+				"Cluster autoscaler, quotas, and downstream services can handle the higher ramp rate.",
+			},
+			Warnings: []string{"Aggressive scale-up can increase cost and amplify traffic spikes."},
+			Apply:    true,
+		})
+	}
+
+	if visibleScaleDownPressure(hpa) && missingPolicies(hpa.Spec.Behavior, "scaleDown") {
+		patch := mustJSON(map[string]any{
+			"spec": map[string]any{
+				"behavior": map[string]any{
+					"scaleDown": map[string]any{
+						"stabilizationWindowSeconds": 300,
+						"selectPolicy":               "Max",
+						"policies": []map[string]any{
+							{"type": "Percent", "value": 50, "periodSeconds": 60},
+						},
+					},
+				},
+			},
+		})
+		suggestions = append(suggestions, Suggestion{
+			Title:       "Add explicit scale-down policy",
+			Description: "Metrics are below target and scale-down behavior is implicit. A bounded scaleDown policy keeps downscale predictable.",
+			Command:     kubectlPatchCommand(hpa, patch, true),
+			Patch:       patch,
+			Risk:        "medium",
+			Preconditions: []string{
+				"The workload tolerates gradual downscale.",
+				"Traffic has enough signal stability for a 300s stabilization window.",
+			},
+			Warnings: []string{"Too-fast scale-down can cause latency spikes during rebound traffic."},
+			Apply:    true,
+		})
+	}
+	return suggestions
+}
+
+func toleranceSuggestions(hpa *autoscalingv2.HorizontalPodAutoscaler) []Suggestion {
+	if hpa.Status.CurrentReplicas != hpa.Status.DesiredReplicas {
+		return nil
+	}
+	metric, ok := MetricOutsideTarget(hpa)
+	if !ok || metric.Ratio < 1.02 || metric.Ratio > 1.10 {
+		return nil
+	}
+	tolerance := resource.MustParse("0.05")
+	patch := mustJSON(map[string]any{
+		"spec": map[string]any{
+			"behavior": map[string]any{
+				"scaleUp": map[string]any{
+					"tolerance": tolerance.String(),
+				},
+			},
+		},
+	})
+	return []Suggestion{{
+		Title:       "Review scale-up tolerance",
+		Description: fmt.Sprintf("%s is %.3fx target while replicas are unchanged. If your cluster enables HPAConfigurableTolerance, a lower scaleUp tolerance such as 0.05 can make small sustained pressure scale sooner.", metric.Name, metric.Ratio),
+		Command:     kubectlPatchCommand(hpa, patch, true),
+		Patch:       patch,
+		Risk:        "medium",
+		Preconditions: []string{
+			"The API server and controller-manager enable HPAConfigurableTolerance.",
+			"The signal is sustained, not a short-lived metric spike.",
+		},
+		Warnings: []string{"Lower tolerance can cause more frequent scaling and replica churn."},
+		Apply:    true,
+	}}
+}
+
+func metricMixSuggestions(hpa *autoscalingv2.HorizontalPodAutoscaler) []Suggestion {
+	var suggestions []Suggestion
+	hasResource := false
+	for _, spec := range hpa.Spec.Metrics {
+		if spec.Type == autoscalingv2.ResourceMetricSourceType || spec.Type == autoscalingv2.ContainerResourceMetricSourceType {
+			hasResource = true
+		}
+	}
+	for _, spec := range hpa.Spec.Metrics {
+		if spec.Type == autoscalingv2.ExternalMetricSourceType && spec.External != nil && !hasCurrentExternalMetric(hpa, spec.External.Metric.Name) {
+			suggestions = append(suggestions, Suggestion{
+				Title:       "Investigate stale external metric",
+				Description: fmt.Sprintf("External metric %q is configured but missing from currentMetrics. Fix the adapter/selector or remove the metric if it is no longer used.", spec.External.Metric.Name),
+				Risk:        "low",
+				Preconditions: []string{
+					"The external metric is absent from HPA status for more than one reconciliation interval.",
+					"Events or adapter logs confirm the metric cannot be fetched.",
+				},
+			})
+		}
+	}
+	if !hasResource && len(hpa.Spec.Metrics) > 0 {
+		suggestions = append(suggestions, Suggestion{
+			Title:       "Consider a resource safety metric",
+			Description: "This HPA relies only on custom, object, pods, or external metrics. Adding CPU or memory can provide a safety signal when business metrics are delayed.",
+			Risk:        "low",
+			Warnings:    []string{"Only add resource metrics when requests are configured correctly and the metric matches the workload bottleneck."},
+		})
+	}
+	return suggestions
+}
+
+func staleMetricSuggestions(hpa *autoscalingv2.HorizontalPodAutoscaler) []Suggestion {
+	var suggestions []Suggestion
+	for _, spec := range hpa.Spec.Metrics {
+		if spec.Type == autoscalingv2.ExternalMetricSourceType && spec.External != nil {
+			suggestions = append(suggestions, Suggestion{
+				Title:       "Check external metric freshness",
+				Description: fmt.Sprintf("External metric %q can block scaling when the adapter returns stale or missing data. Check the external.metrics.k8s.io API and adapter logs.", spec.External.Metric.Name),
+				Risk:        "low",
+			})
+		}
+		if spec.Type == autoscalingv2.ObjectMetricSourceType && spec.Object != nil {
+			suggestions = append(suggestions, Suggestion{
+				Title:       "Check object metric target",
+				Description: fmt.Sprintf("Object metric %q targets %s/%s. Verify that object exists and the adapter reports the same metric name.", spec.Object.Metric.Name, spec.Object.DescribedObject.Kind, spec.Object.DescribedObject.Name),
+				Risk:        "low",
+			})
+		}
+	}
+	return suggestions
+}
+
+func missingPolicies(behavior *autoscalingv2.HorizontalPodAutoscalerBehavior, direction string) bool {
+	if behavior == nil {
+		return true
+	}
+	var rules *autoscalingv2.HPAScalingRules
+	switch direction {
+	case "scaleUp":
+		rules = behavior.ScaleUp
+	case "scaleDown":
+		rules = behavior.ScaleDown
+	}
+	return rules == nil || len(rules.Policies) == 0
+}
+
+func visibleScaleDownPressure(hpa *autoscalingv2.HorizontalPodAutoscaler) bool {
+	for _, metric := range hpa.Status.CurrentMetrics {
+		formatted := FormatMetricStatus(hpa, metric)
+		if formatted.Ratio != nil && *formatted.Ratio < 0.80 && !math.IsNaN(*formatted.Ratio) {
+			return true
+		}
+	}
+	return false
 }
 
 func recommendedMaxReplicas(hpa *autoscalingv2.HorizontalPodAutoscaler) int32 {

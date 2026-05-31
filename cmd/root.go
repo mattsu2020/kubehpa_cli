@@ -55,6 +55,9 @@ type options struct {
 	dryRun         bool
 	yes            bool
 	lang           string
+	debug          bool
+	config         string
+	healthWeights  hpaanalysis.HealthWeights
 	problem        bool
 	recommend      bool
 	watch          bool
@@ -106,6 +109,14 @@ func NewRootCommand() *cobra.Command {
 				opts.interpret = false
 				opts.suggest = false
 			}
+			if opts.config != "" {
+				weights, err := loadHealthWeights(opts.config)
+				if err != nil {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to load --config %s: %v\n", opts.config, err)
+				} else {
+					opts.healthWeights = weights
+				}
+			}
 			opts.in = cmd.InOrStdin()
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -137,6 +148,8 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().BoolVar(&opts.dryRun, "dry-run", opts.dryRun, "use server-side dry-run for --apply; set --dry-run=false to persist changes")
 	root.PersistentFlags().BoolVarP(&opts.yes, "yes", "y", false, "skip confirmation when used with --apply")
 	root.PersistentFlags().StringVar(&opts.lang, "lang", "", "text output language: en or ja")
+	root.PersistentFlags().BoolVarP(&opts.debug, "debug", "v", false, "include internal analysis details such as ratios and health scoring inputs")
+	root.PersistentFlags().StringVar(&opts.config, "config", "", "optional config file for analysis settings such as health score weights")
 	root.PersistentFlags().BoolVar(&opts.recommend, "recommend", false, "alias for --suggest")
 	root.PersistentFlags().BoolVar(&opts.noInterpret, "no-interpret", false, "omit interpretation and show raw status-derived data")
 	root.PersistentFlags().Var(&opts.events, "events", "show recent HPA events: true, false, or a number")
@@ -204,7 +217,7 @@ func newListCommand(opts *options) *cobra.Command {
 			return runList(cmd.Context(), cmd.OutOrStdout(), opts)
 		},
 	}
-	cmd.Flags().StringVar(&opts.sortBy, "sort-by", "", "sort list by namespace, name, current, desired, health, or issue")
+	cmd.Flags().StringVar(&opts.sortBy, "sort-by", "", "sort list by namespace, name, current, desired, diff, health-score, or issue")
 	cmd.Flags().StringVar(&opts.filter, "filter", "", "filter list by all, ok, error, limited, scaling-limited, or issue")
 	cmd.Flags().IntVar(&opts.healthScoreMax, "health-score", -1, "show only HPAs with health score at or below this threshold")
 	cmd.Flags().BoolVar(&opts.problem, "problem", false, "show only HPAs with visible problems")
@@ -310,7 +323,7 @@ func buildStatusReport(ctx context.Context, opts *options, name string, includeI
 	}
 
 	report := hpaanalysis.StatusReport{
-		Analysis: hpaanalysis.Analyze(hpa, includeInterpretation),
+		Analysis: hpaanalysis.AnalyzeWithOptions(hpa, includeInterpretation, analysisOptions(opts)),
 	}
 
 	if opts.events.enabled {
@@ -349,12 +362,16 @@ func runList(ctx context.Context, out io.Writer, opts *options) error {
 
 	report := hpaanalysis.ListReport{}
 	for i := range hpas.Items {
-		item := hpaanalysis.NewListItem(hpaanalysis.Analyze(&hpas.Items[i], false))
+		item := hpaanalysis.NewListItem(hpaanalysis.AnalyzeWithOptions(&hpas.Items[i], false, analysisOptions(opts)))
 		if matchesListFilter(item, filter) && matchesHealthScoreThreshold(item, opts.healthScoreMax) {
 			report.Items = append(report.Items, item)
 		}
 	}
-	sortListItems(report.Items, opts.sortBy)
+	sortBy := opts.sortBy
+	if opts.problem && sortBy == "" {
+		sortBy = "problem"
+	}
+	sortListItems(report.Items, sortBy)
 
 	wide := opts.wide || opts.output == "wide"
 	return writeOutput(out, opts.output, opts.template, report, func() error {
@@ -519,6 +536,22 @@ func sortListItems(items []hpaanalysis.ListItem, sortBy string) {
 			return left.Health < right.Health
 		case "healthscore", "score":
 			return left.HealthScore > right.HealthScore
+		case "problem":
+			if left.HealthScore != right.HealthScore {
+				return left.HealthScore < right.HealthScore
+			}
+			diffLeft := left.Desired - left.Current
+			if diffLeft < 0 {
+				diffLeft = -diffLeft
+			}
+			diffRight := right.Desired - right.Current
+			if diffRight < 0 {
+				diffRight = -diffRight
+			}
+			if diffLeft != diffRight {
+				return diffLeft > diffRight
+			}
+			return left.Namespace+"/"+left.Name < right.Namespace+"/"+right.Name
 		case "issue":
 			return left.Issue < right.Issue
 		case "min", "minreplicas":
@@ -543,6 +576,27 @@ func outputLang(opts *options) string {
 	return ""
 }
 
+func analysisOptions(opts *options) hpaanalysis.AnalysisOptions {
+	return hpaanalysis.AnalysisOptions{
+		HealthWeights: opts.healthWeights,
+		Debug:         opts.debug,
+	}
+}
+
+func loadHealthWeights(path string) (hpaanalysis.HealthWeights, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return hpaanalysis.HealthWeights{}, err
+	}
+	var cfg struct {
+		HealthWeights hpaanalysis.HealthWeights `json:"healthWeights" yaml:"healthWeights"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return hpaanalysis.HealthWeights{}, err
+	}
+	return cfg.HealthWeights, nil
+}
+
 func applySuggestions(ctx context.Context, out io.Writer, opts *options, name string, suggestions []hpaanalysis.Suggestion) ([]string, error) {
 	var patches []hpaanalysis.Suggestion
 	for _, suggestion := range suggestions {
@@ -564,7 +618,7 @@ func applySuggestions(ctx context.Context, out io.Writer, opts *options, name st
 		if err != nil {
 			return nil, fmt.Errorf("failed to get HPA before applying suggested patch %q: %w", suggestion.Title, err)
 		}
-		if _, err := fmt.Fprintf(out, "\nProposed patch: %s\n%s\n", suggestion.Title, patchDiff(current.Spec.MinReplicas, current.Spec.MaxReplicas, suggestion.Patch)); err != nil {
+		if _, err := fmt.Fprintf(out, "\nProposed patch: %s\n%s\n", suggestion.Title, patchDiff(current.Spec.MinReplicas, current.Status.DesiredReplicas, current.Spec.MaxReplicas, suggestion.Patch)); err != nil {
 			return nil, err
 		}
 	}
@@ -618,7 +672,7 @@ func applySuggestions(ctx context.Context, out io.Writer, opts *options, name st
 	return applied, nil
 }
 
-func patchDiff(currentMin *int32, currentMax int32, patch string) string {
+func patchDiff(currentMin *int32, currentDesired int32, currentMax int32, patch string) string {
 	var parsed struct {
 		Spec struct {
 			MinReplicas *int32 `json:"minReplicas"`
@@ -629,7 +683,7 @@ func patchDiff(currentMin *int32, currentMax int32, patch string) string {
 	if err := json.Unmarshal([]byte(patch), &parsed); err != nil {
 		return fmt.Sprintf("  patch: %s", patch)
 	}
-	var lines []string
+	lines := []string{fmt.Sprintf("  status.desiredReplicas: %d (current status, unchanged by patch)", currentDesired)}
 	if parsed.Spec.MinReplicas != nil {
 		current := int32(1)
 		if currentMin != nil {

@@ -23,6 +23,20 @@ const (
 	healthPenaltyAtMinimumReplicas   = 5
 )
 
+type AnalysisOptions struct {
+	HealthWeights HealthWeights `json:"healthWeights,omitempty" yaml:"healthWeights,omitempty"`
+	Debug         bool          `json:"debug,omitempty" yaml:"debug,omitempty"`
+}
+
+type HealthWeights struct {
+	ScalingInactive     int `json:"scalingInactive,omitempty" yaml:"scalingInactive,omitempty"`
+	UnableToScale       int `json:"unableToScale,omitempty" yaml:"unableToScale,omitempty"`
+	ScalingLimited      int `json:"scalingLimited,omitempty" yaml:"scalingLimited,omitempty"`
+	ImplicitMaxReplicas int `json:"implicitMaxReplicas,omitempty" yaml:"implicitMaxReplicas,omitempty"`
+	ScaleDownStabilized int `json:"scaleDownStabilized,omitempty" yaml:"scaleDownStabilized,omitempty"`
+	AtMinimumReplicas   int `json:"atMinimumReplicas,omitempty" yaml:"atMinimumReplicas,omitempty"`
+}
+
 type Analysis struct {
 	Namespace         string             `json:"namespace" yaml:"namespace"`
 	Name              string             `json:"name" yaml:"name"`
@@ -40,6 +54,7 @@ type Analysis struct {
 	Actions           []string           `json:"recommendedActions,omitempty" yaml:"recommendedActions,omitempty"`
 	Suggestions       []Suggestion       `json:"suggestions,omitempty" yaml:"suggestions,omitempty"`
 	Interpretation    []string           `json:"interpretation,omitempty" yaml:"interpretation,omitempty"`
+	Debug             []string           `json:"debug,omitempty" yaml:"debug,omitempty"`
 	ImpactMetric      *MetricImpactGuess `json:"impactMetric,omitempty" yaml:"impactMetric,omitempty"`
 	CreationTimestamp metav1.Time        `json:"creationTimestamp,omitempty" yaml:"creationTimestamp,omitempty"`
 }
@@ -87,6 +102,10 @@ type Suggestion struct {
 }
 
 func Analyze(src *autoscalingv2.HorizontalPodAutoscaler, includeInterpretation bool) Analysis {
+	return AnalyzeWithOptions(src, includeInterpretation, AnalysisOptions{})
+}
+
+func AnalyzeWithOptions(src *autoscalingv2.HorizontalPodAutoscaler, includeInterpretation bool, opts AnalysisOptions) Analysis {
 	if src == nil {
 		return Analysis{
 			Health:      "ERROR",
@@ -139,51 +158,81 @@ func Analyze(src *autoscalingv2.HorizontalPodAutoscaler, includeInterpretation b
 		analysis.Suggestions = BuildSuggestions(src, minReplicas)
 		analysis.Interpretation = Interpret(src, minReplicas)
 	}
-	analysis.Health, analysis.HealthScore = Health(src, minReplicas)
+	analysis.Health, analysis.HealthScore = HealthWithWeights(src, minReplicas, opts.HealthWeights)
+	if opts.Debug {
+		analysis.Debug = DebugLines(src, analysis)
+	}
 
 	return analysis
 }
 
 func Health(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas int32) (string, int) {
+	return HealthWithWeights(hpa, minReplicas, HealthWeights{})
+}
+
+func HealthWithWeights(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas int32, weights HealthWeights) (string, int) {
 	if hpa == nil {
 		return "ERROR", 0
 	}
+	weights = defaultHealthWeights(weights)
 
 	score := healthScoreMax
 	health := "OK"
 	for _, condition := range hpa.Status.Conditions {
 		switch {
 		case condition.Type == "ScalingActive" && condition.Status != corev1.ConditionTrue:
-			score -= healthPenaltyScalingInactive
+			score -= weights.ScalingInactive
 			health = "ERROR"
 		case condition.Type == "AbleToScale" && condition.Status != corev1.ConditionTrue:
-			score -= healthPenaltyUnableToScale
+			score -= weights.UnableToScale
 			health = "ERROR"
 		case condition.Type == "ScalingLimited" && condition.Status == corev1.ConditionTrue:
-			score -= healthPenaltyScalingLimited
+			score -= weights.ScalingLimited
 			if health != "ERROR" {
 				health = "LIMITED"
 			}
 		case condition.Type == "AbleToScale" && condition.Reason == "ScaleDownStabilized":
-			score -= healthPenaltyScaleDownStabilized
+			score -= weights.ScaleDownStabilized
 			if health == "OK" {
 				health = "STABILIZED"
 			}
 		}
 	}
 	if hpa.Status.CurrentReplicas == hpa.Status.DesiredReplicas && hpa.Status.CurrentReplicas == hpa.Spec.MaxReplicas {
-		score -= healthPenaltyImplicitMaxReplicas
+		score -= weights.ImplicitMaxReplicas
 		if health == "OK" {
 			health = "LIMITED"
 		}
 	}
 	if hpa.Status.DesiredReplicas == minReplicas {
-		score -= healthPenaltyAtMinimumReplicas
+		score -= weights.AtMinimumReplicas
 	}
 	if score < 0 {
 		score = 0
 	}
 	return health, score
+}
+
+func defaultHealthWeights(weights HealthWeights) HealthWeights {
+	if weights.ScalingInactive == 0 {
+		weights.ScalingInactive = healthPenaltyScalingInactive
+	}
+	if weights.UnableToScale == 0 {
+		weights.UnableToScale = healthPenaltyUnableToScale
+	}
+	if weights.ScalingLimited == 0 {
+		weights.ScalingLimited = healthPenaltyScalingLimited
+	}
+	if weights.ImplicitMaxReplicas == 0 {
+		weights.ImplicitMaxReplicas = healthPenaltyImplicitMaxReplicas
+	}
+	if weights.ScaleDownStabilized == 0 {
+		weights.ScaleDownStabilized = healthPenaltyScaleDownStabilized
+	}
+	if weights.AtMinimumReplicas == 0 {
+		weights.AtMinimumReplicas = healthPenaltyAtMinimumReplicas
+	}
+	return weights
 }
 
 func SummarizeDirection(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas int32) string {
@@ -225,6 +274,7 @@ func Interpret(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas int32) []
 			"[confidence: high] This plugin avoids treating desiredReplicas=0 as a scale-down recommendation in this state.",
 			limitation,
 		)
+		lines = append(lines, ExternalMetricDiagnostics(hpa)...)
 		return lines
 	}
 
@@ -270,8 +320,49 @@ func Interpret(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas int32) []
 		lines = append(lines, "[confidence: high] Events and human-readable messages can hint at the contributing metric, but they are not a stable decision record.")
 	}
 
+	lines = append(lines, ExternalMetricDiagnostics(hpa)...)
+	lines = append(lines, ObjectMetricDiagnostics(hpa)...)
 	lines = append(lines, limitation)
 
+	return lines
+}
+
+func ExternalMetricDiagnostics(hpa *autoscalingv2.HorizontalPodAutoscaler) []string {
+	var lines []string
+	for _, spec := range hpa.Spec.Metrics {
+		if spec.Type != autoscalingv2.ExternalMetricSourceType || spec.External == nil {
+			continue
+		}
+		if !hasCurrentExternalMetric(hpa, spec.External.Metric.Name) {
+			lines = append(lines, fmt.Sprintf("[confidence: high] External metric %q is configured but no matching current metric status is reported; check the external metrics adapter, selector, and metric freshness.", spec.External.Metric.Name))
+			continue
+		}
+		if metric, ok := currentExternalMetric(hpa, spec.External.Metric.Name); ok {
+			formatted := FormatMetricStatus(hpa, metric)
+			if formatted.Ratio != nil {
+				lines = append(lines, fmt.Sprintf("[confidence: medium] External metric %q is %.3fx its target; stale or delayed adapter data can make HPA decisions lag behind workload demand.", spec.External.Metric.Name, *formatted.Ratio))
+			}
+		}
+	}
+	return lines
+}
+
+func ObjectMetricDiagnostics(hpa *autoscalingv2.HorizontalPodAutoscaler) []string {
+	var lines []string
+	for _, spec := range hpa.Spec.Metrics {
+		if spec.Type != autoscalingv2.ObjectMetricSourceType || spec.Object == nil {
+			continue
+		}
+		if metric, ok := currentObjectMetric(hpa, spec.Object.Metric.Name); ok {
+			formatted := FormatMetricStatus(hpa, metric)
+			object := fmt.Sprintf("%s/%s", spec.Object.DescribedObject.Kind, spec.Object.DescribedObject.Name)
+			if formatted.Ratio != nil {
+				lines = append(lines, fmt.Sprintf("[confidence: medium] Object metric %q on %s is %.3fx its target; compare this object-level load with per-pod load before changing replica limits.", spec.Object.Metric.Name, object, *formatted.Ratio))
+			}
+		} else {
+			lines = append(lines, fmt.Sprintf("[confidence: high] Object metric %q is configured but no matching current metric status is reported; verify the described object and metric adapter output.", spec.Object.Metric.Name))
+		}
+	}
 	return lines
 }
 
@@ -510,6 +601,33 @@ func FindExternalTarget(hpa *autoscalingv2.HorizontalPodAutoscaler, name string)
 	return FormatMetricTarget(FindExternalTargetSpec(hpa, name))
 }
 
+func hasCurrentExternalMetric(hpa *autoscalingv2.HorizontalPodAutoscaler, name string) bool {
+	_, ok := currentExternalMetric(hpa, name)
+	return ok
+}
+
+func currentExternalMetric(hpa *autoscalingv2.HorizontalPodAutoscaler, name string) (autoscalingv2.MetricStatus, bool) {
+	for _, metric := range hpa.Status.CurrentMetrics {
+		if metric.Type == autoscalingv2.ExternalMetricSourceType &&
+			metric.External != nil &&
+			metric.External.Metric.Name == name {
+			return metric, true
+		}
+	}
+	return autoscalingv2.MetricStatus{}, false
+}
+
+func currentObjectMetric(hpa *autoscalingv2.HorizontalPodAutoscaler, name string) (autoscalingv2.MetricStatus, bool) {
+	for _, metric := range hpa.Status.CurrentMetrics {
+		if metric.Type == autoscalingv2.ObjectMetricSourceType &&
+			metric.Object != nil &&
+			metric.Object.Metric.Name == name {
+			return metric, true
+		}
+	}
+	return autoscalingv2.MetricStatus{}, false
+}
+
 func FormatMetricTarget(target autoscalingv2.MetricTarget) string {
 	switch target.Type {
 	case autoscalingv2.UtilizationMetricType:
@@ -578,6 +696,9 @@ func FormatBehaviorRule(direction string, rules *autoscalingv2.HPAScalingRules) 
 	if rules.SelectPolicy != nil {
 		rule.SelectPolicy = string(*rules.SelectPolicy)
 	}
+	if rules.Tolerance != nil && !rules.Tolerance.IsZero() {
+		rule.Policies = append(rule.Policies, "tolerance "+rules.Tolerance.String())
+	}
 	for _, policy := range rules.Policies {
 		rule.Policies = append(rule.Policies, fmt.Sprintf("%s %d per %ds", policy.Type, policy.Value, policy.PeriodSeconds))
 	}
@@ -606,6 +727,7 @@ func RecommendedActions(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas 
 	}
 	if condition := FindCondition(hpa, "ScalingActive"); condition != nil && condition.Status != corev1.ConditionTrue {
 		actions = append(actions, "Check metrics-server or custom/external metrics adapters; ScalingActive is not True.")
+		actions = append(actions, staleMetricActions(hpa)...)
 		return actions
 	}
 	if condition := FindCondition(hpa, "AbleToScale"); condition != nil && condition.Reason == "ScaleDownStabilized" {
@@ -627,6 +749,39 @@ func RecommendedActions(hpa *autoscalingv2.HorizontalPodAutoscaler, minReplicas 
 		actions = append(actions, "No immediate action is visible from HPA status; inspect metrics and recent Events if behavior is unexpected.")
 	}
 	return actions
+}
+
+func staleMetricActions(hpa *autoscalingv2.HorizontalPodAutoscaler) []string {
+	var actions []string
+	for _, spec := range hpa.Spec.Metrics {
+		switch {
+		case spec.Type == autoscalingv2.ExternalMetricSourceType && spec.External != nil:
+			actions = append(actions, fmt.Sprintf("Verify external metric %q in the external metrics API; if it is retired, remove it from spec.metrics so it no longer blocks scaling.", spec.External.Metric.Name))
+		case spec.Type == autoscalingv2.ObjectMetricSourceType && spec.Object != nil:
+			actions = append(actions, fmt.Sprintf("Verify object metric %q and its described object %s/%s before changing replica bounds.", spec.Object.Metric.Name, spec.Object.DescribedObject.Kind, spec.Object.DescribedObject.Name))
+		}
+	}
+	return actions
+}
+
+func DebugLines(hpa *autoscalingv2.HorizontalPodAutoscaler, analysis Analysis) []string {
+	var lines []string
+	lines = append(lines, fmt.Sprintf("replicas: current=%d desired=%d min=%d max=%d diff=%+d", analysis.Current, analysis.Desired, analysis.Min, analysis.Max, analysis.Desired-analysis.Current))
+	lines = append(lines, fmt.Sprintf("health: state=%s score=%d", analysis.Health, analysis.HealthScore))
+	for _, metric := range analysis.Metrics {
+		if metric.Ratio == nil {
+			lines = append(lines, fmt.Sprintf("metric %s/%s: current=%s target=%s ratio=<unknown> note=%q", metric.Type, metric.Name, metric.Current, metric.Target, metric.Note))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("metric %s/%s: current=%s target=%s ratio=%.3f note=%q", metric.Type, metric.Name, metric.Current, metric.Target, *metric.Ratio, metric.Note))
+	}
+	for _, condition := range hpa.Status.Conditions {
+		lines = append(lines, fmt.Sprintf("condition %s=%s reason=%s", condition.Type, condition.Status, condition.Reason))
+	}
+	if analysis.ImpactMetric != nil {
+		lines = append(lines, fmt.Sprintf("impactEstimate: metric=%s ratio=%.3f confidence=medium", analysis.ImpactMetric.Name, analysis.ImpactMetric.Ratio))
+	}
+	return lines
 }
 
 func scaleDownStabilizationWindow(hpa *autoscalingv2.HorizontalPodAutoscaler) *int32 {
